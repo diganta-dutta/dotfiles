@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# install.sh — symlink slash-commands from the ai-prompts repo into Claude Code
-# and Cline deployment paths.
+# install.sh — symlink dotfiles + slash-commands into their deployment paths.
 #
 # Idempotent: safe to run multiple times. Existing real files (not symlinks) at
 # the target paths are backed up to <file>.backup-<timestamp>.
@@ -10,6 +9,8 @@
 #   CLINE_WORKFLOWS_DIR   Path to Cline workflows dir (default: $HOME/Documents/Cline/Workflows)
 
 set -euo pipefail
+
+REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 AI_PROMPTS_REPO="${AI_PROMPTS_REPO:-$HOME/code/ai-prompts}"
 
@@ -26,6 +27,31 @@ if [[ ! -d "${AI_PROMPTS_REPO}" ]]; then
   echo "Clone it first, or run with: AI_PROMPTS_REPO=/path/to/ai-prompts ./install.sh"
   exit 1
 fi
+
+ln_one() {
+  local src="$1"
+  local dst="$2"
+  local label="$3"
+
+  if [[ ! -e "${src}" ]]; then
+    echo "  skip: ${label} source not found at ${src}"
+    return
+  fi
+
+  mkdir -p "$(dirname "${dst}")"
+
+  if [[ -L "${dst}" ]]; then
+    ln -sfn "${src}" "${dst}"
+    echo "  link: ${label}"
+  elif [[ -e "${dst}" ]]; then
+    mv "${dst}" "${dst}.backup-${TIMESTAMP}"
+    ln -s "${src}" "${dst}"
+    echo "  link: ${label} (existing file backed up to ${dst}.backup-${TIMESTAMP})"
+  else
+    ln -s "${src}" "${dst}"
+    echo "  link: ${label}"
+  fi
+}
 
 link_files() {
   local src_dir="$1"
@@ -66,6 +92,13 @@ link_files() {
   done
 }
 
+echo "Installing Claude Code config from ${REPO_DIR}/claude"
+ln_one "${REPO_DIR}/claude/settings.json" "${HOME}/.claude/settings.json" "claude/settings.json -> ~/.claude/settings.json"
+ln_one "${REPO_DIR}/claude/CLAUDE.md"     "${HOME}/.claude/CLAUDE.md"     "claude/CLAUDE.md -> ~/.claude/CLAUDE.md"
+
+echo "Installing zsh config from ${REPO_DIR}/zsh"
+ln_one "${REPO_DIR}/zsh/zshenv" "${HOME}/.zshenv" "zsh/zshenv -> ~/.zshenv"
+
 echo "ai-prompts repo: ${AI_PROMPTS_REPO}"
 echo "Installing Claude Code commands -> ${CLAUDE_CMDS_DST}"
 link_files "${CLAUDE_CMDS_SRC}" "${CLAUDE_CMDS_DST}" "claude-code"
@@ -73,4 +106,12 @@ link_files "${CLAUDE_CMDS_SRC}" "${CLAUDE_CMDS_DST}" "claude-code"
 echo "Installing Cline workflows -> ${CLINE_WF_DST}"
 link_files "${CLINE_WF_SRC}" "${CLINE_WF_DST}" "cline"
 
+echo ""
 echo "Done."
+echo ""
+if [[ ! -f "${HOME}/.zshenv.local" ]]; then
+  echo "NEXT STEP: ~/.zshenv.local does not exist yet."
+  echo "  cp ${REPO_DIR}/zsh/zshenv.local.example ~/.zshenv.local"
+  echo "  chmod 600 ~/.zshenv.local"
+  echo "  # then edit ~/.zshenv.local with real secret values"
+fi

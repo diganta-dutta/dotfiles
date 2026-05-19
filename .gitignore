@@ -1,0 +1,14 @@
+# Defense-in-depth: never accidentally commit per-machine secret files.
+# These should live at $HOME, not in the repo — but if a stray copy lands
+# in the working tree (e.g. fat-fingered `cp`), keep it out of git.
+*.local
+!*.local.example
+.zshenv.local
+zshenv.local
+
+# macOS noise
+.DS_Store
+
+# Editor noise
+*.swp
+*.swo

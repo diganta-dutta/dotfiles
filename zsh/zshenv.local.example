@@ -1,0 +1,20 @@
+# Template for ~/.zshenv.local — per-machine secrets.
+#
+# On each workstation:
+#   cp zsh/zshenv.local.example ~/.zshenv.local
+#   chmod 600 ~/.zshenv.local
+#   <edit ~/.zshenv.local with real values>
+#
+# ~/.zshenv.local is sourced by ~/.zshenv (see zsh/zshenv) on every shell
+# startup, including the non-interactive shells Claude Code spawns.
+#
+# DO NOT commit ~/.zshenv.local. The dotfiles .gitignore excludes it.
+
+# Jira CLI (ankitpokhrel/jira-cli)
+export JIRA_API_TOKEN=""
+
+# Uncomment and fill in others as needed:
+# export JIRA_API_USER=""
+# export LINEAR_API_KEY=""
+# export ANTHROPIC_API_KEY=""
+# export OPENAI_API_KEY=""

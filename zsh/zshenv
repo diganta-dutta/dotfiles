@@ -1,0 +1,15 @@
+# ~/.zshenv — sourced for ALL zsh invocations (interactive, non-interactive,
+# scripts, login). Use this for env vars that any shell — including the
+# non-interactive ones tools like Claude Code spawn — needs to see.
+#
+# Aliases, prompt config, completions, and other interactive-only setup
+# belong in ~/.zshrc, not here.
+
+# Per-machine secrets live in ~/.zshenv.local (gitignored, not committed).
+# Copy zsh/zshenv.local.example from the dotfiles repo to ~/.zshenv.local
+# on each workstation and fill in real values.
+[[ -f "$HOME/.zshenv.local" ]] && source "$HOME/.zshenv.local"
+
+# Non-secret env vars below this line.
+# export EDITOR=vim
+# export LANG=en_US.UTF-8
