@@ -53,7 +53,7 @@ ln_one() {
   fi
 }
 
-link_files() {
+link_tree() {
   local src_dir="$1"
   local dst_dir="$2"
   local label="$3"
@@ -63,33 +63,30 @@ link_files() {
     return
   fi
 
-  mkdir -p "${dst_dir}"
+  local found=0
+  while IFS= read -r -d '' src; do
+    found=1
+    local rel=${src#"${src_dir}"/}
+    local dst="${dst_dir}/${rel}"
 
-  shopt -s nullglob
-  local files=( "${src_dir}"/*.md )
-  shopt -u nullglob
-
-  if [[ ${#files[@]} -eq 0 ]]; then
-    echo "  skip: ${label} has no .md files"
-    return
-  fi
-
-  for src in "${files[@]}"; do
-    local name; name="$(basename "${src}")"
-    local dst="${dst_dir}/${name}"
+    mkdir -p "$(dirname "${dst}")"
 
     if [[ -L "${dst}" ]]; then
       ln -sfn "${src}" "${dst}"
-      echo "  link: ${label}/${name}"
+      echo "  link: ${label}/${rel}"
     elif [[ -e "${dst}" ]]; then
       mv "${dst}" "${dst}.backup-${TIMESTAMP}"
       ln -s "${src}" "${dst}"
-      echo "  link: ${label}/${name} (existing file backed up)"
+      echo "  link: ${label}/${rel} (existing file backed up)"
     else
       ln -s "${src}" "${dst}"
-      echo "  link: ${label}/${name}"
+      echo "  link: ${label}/${rel}"
     fi
-  done
+  done < <(find "${src_dir}" -type f ! -name '.DS_Store' -print0)
+
+  if [[ ${found} -eq 0 ]]; then
+    echo "  skip: ${label} has no files"
+  fi
 }
 
 echo "Installing Claude Code config from ${REPO_DIR}/claude"
@@ -101,10 +98,10 @@ ln_one "${REPO_DIR}/zsh/zshenv" "${HOME}/.zshenv" "zsh/zshenv -> ~/.zshenv"
 
 echo "ai-prompts repo: ${AI_PROMPTS_REPO}"
 echo "Installing Claude Code commands -> ${CLAUDE_CMDS_DST}"
-link_files "${CLAUDE_CMDS_SRC}" "${CLAUDE_CMDS_DST}" "claude-code"
+link_tree "${CLAUDE_CMDS_SRC}" "${CLAUDE_CMDS_DST}" "claude-code"
 
 echo "Installing Cline workflows -> ${CLINE_WF_DST}"
-link_files "${CLINE_WF_SRC}" "${CLINE_WF_DST}" "cline"
+link_tree "${CLINE_WF_SRC}" "${CLINE_WF_DST}" "cline"
 
 echo ""
 echo "Done."
