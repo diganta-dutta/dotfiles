@@ -1,12 +1,12 @@
 {
   "permissions": {
-    "defaultMode": "acceptEdits",
-
     "allow": [
       "Read",
       "Edit",
       "Write",
-
+      "Read(~/.claude/scratch/**)",
+      "Edit(~/.claude/scratch/**)",
+      "Write(~/.claude/scratch/**)",
       "Bash(git add *)",
       "Bash(git commit *)",
       "Bash(git checkout *)",
@@ -33,7 +33,6 @@
       "Bash(git ls-tree *)",
       "Bash(git ls-tree)",
       "Bash(git submodule status*)",
-
       "Bash(gh pr view *)",
       "Bash(gh pr list *)",
       "Bash(gh pr diff *)",
@@ -45,7 +44,6 @@
       "Bash(gh api *)",
       "Bash(gh auth status*)",
       "Bash(gh auth status)",
-
       "Bash(npm *)",
       "Bash(npx *)",
       "Bash(node *)",
@@ -68,23 +66,19 @@
       "Bash(ruff *)",
       "Bash(mypy *)",
       "Bash(black *)",
-
       "Bash(mkdir *)",
       "Bash(touch *)",
       "Bash(cp *)",
       "Bash(mv *)",
       "Bash(chmod *)",
-
       "Bash(ls *)",
       "Bash(ls)",
       "Bash(pwd)",
       "Bash(find *)",
       "Bash(tree *)",
       "Bash(tree)",
-
       "Bash(grep *)",
       "Bash(rg *)",
-
       "Bash(cat *)",
       "Bash(head *)",
       "Bash(tail *)",
@@ -95,7 +89,6 @@
       "Bash(env)",
       "Bash(printenv *)",
       "Bash(printenv)",
-
       "Bash(sed *)",
       "Bash(awk *)",
       "Bash(jq *)",
@@ -109,11 +102,9 @@
       "Bash(basename *)",
       "Bash(dirname *)",
       "Bash(realpath *)",
-
       "Bash(tar *)",
       "Bash(unzip *)",
       "Bash(zip *)",
-
       "Bash(jira issue view *)",
       "Bash(jira issue list *)",
       "Bash(jira sprint list *)",
@@ -121,23 +112,12 @@
       "Bash(jira board list *)",
       "Bash(jira project list *)",
       "Bash(jira me)",
-
       "WebFetch(domain:docs.microsoft.com)",
       "WebFetch(domain:learn.microsoft.com)",
       "WebFetch(domain:github.com)",
       "WebFetch(domain:idrive-com.atlassian.net)",
       "WebSearch"
     ],
-
-    "ask": [
-      "Bash(git push *)",
-      "Bash(jira issue create *)",
-      "Bash(jira issue edit *)",
-      "Bash(jira issue move *)",
-      "Bash(jira issue delete *)",
-      "Bash(jira issue comment *)"
-    ],
-
     "deny": [
       "Read(.env)",
       "Read(.env.*)",
@@ -150,6 +130,16 @@
       "Bash(sudo *)",
       "Bash(curl * | sh*)",
       "Bash(wget * | sh*)"
-    ]
-  }
+    ],
+    "ask": [
+      "Bash(git push *)",
+      "Bash(jira issue create *)",
+      "Bash(jira issue edit *)",
+      "Bash(jira issue move *)",
+      "Bash(jira issue delete *)",
+      "Bash(jira issue comment *)"
+    ],
+    "defaultMode": "acceptEdits"
+  },
+  "agentPushNotifEnabled": true
 }
