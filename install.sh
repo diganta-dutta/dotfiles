@@ -53,6 +53,31 @@ ln_one() {
   fi
 }
 
+prune_stale_links() {
+  # Remove symlinks under dst_dir that point into src_dir but whose source
+  # file no longer exists (e.g. a slash command was deleted upstream). Only
+  # touches broken symlinks managed by this script — real files and symlinks
+  # pointing elsewhere are left alone.
+  local src_dir="$1"
+  local dst_dir="$2"
+  local label="$3"
+
+  [[ -d "${dst_dir}" ]] || return
+
+  while IFS= read -r -d '' link; do
+    local target
+    target="$(readlink "${link}")"
+    case "${target}" in
+      "${src_dir}"/*) ;;   # managed by this script
+      *) continue ;;        # points elsewhere — leave it alone
+    esac
+    if [[ ! -e "${link}" ]]; then
+      rm -f "${link}"
+      echo "  prune: ${label}/${link#"${dst_dir}"/} (source removed)"
+    fi
+  done < <(find "${dst_dir}" -type l -print0)
+}
+
 link_tree() {
   local src_dir="$1"
   local dst_dir="$2"
@@ -98,9 +123,11 @@ ln_one "${REPO_DIR}/zsh/zshenv" "${HOME}/.zshenv" "zsh/zshenv -> ~/.zshenv"
 
 echo "ai-prompts repo: ${AI_PROMPTS_REPO}"
 echo "Installing Claude Code commands -> ${CLAUDE_CMDS_DST}"
+prune_stale_links "${CLAUDE_CMDS_SRC}" "${CLAUDE_CMDS_DST}" "claude-code"
 link_tree "${CLAUDE_CMDS_SRC}" "${CLAUDE_CMDS_DST}" "claude-code"
 
 echo "Installing Cline workflows -> ${CLINE_WF_DST}"
+prune_stale_links "${CLINE_WF_SRC}" "${CLINE_WF_DST}" "cline"
 link_tree "${CLINE_WF_SRC}" "${CLINE_WF_DST}" "cline"
 
 echo ""
