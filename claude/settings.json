@@ -37,6 +37,7 @@
       "Bash(gh pr list *)",
       "Bash(gh pr diff *)",
       "Bash(gh pr checks *)",
+      "Bash(gh pr review *)",
       "Bash(gh issue view *)",
       "Bash(gh issue list *)",
       "Bash(gh run view *)",
@@ -116,7 +117,9 @@
       "WebFetch(domain:learn.microsoft.com)",
       "WebFetch(domain:github.com)",
       "WebFetch(domain:idrive-com.atlassian.net)",
-      "WebSearch"
+      "WebSearch",
+      "mcp__github__create_pull_request_review",
+      "mcp__github__create_and_submit_pull_request_review"
     ],
     "deny": [
       "Read(.env)",
