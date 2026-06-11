@@ -6,7 +6,9 @@
 #
 # For every other git repo under ~/code: always fetch, but only fast-forward
 # the checkout when the repo is clean AND on its default branch — unfinished
-# local work is never stashed or otherwise touched.
+# local work is never stashed or otherwise touched. When some other branch (or
+# a detached HEAD) is checked out, the local default branch ref is still
+# fast-forwarded via a fetch refspec, which never touches the working tree.
 #
 # Then open Claude.app. Failures are reported as warnings and NEVER block the
 # launch — you can always start working even offline or mid-conflict.
@@ -97,11 +99,7 @@ for repo in "$CODE_DIR"/*/; do
     continue
   fi
 
-  branch="$(git -C "$repo" symbolic-ref --quiet --short HEAD || true)"
-  if [[ -z "$branch" ]]; then
-    log "  detached HEAD — fetched only"
-    continue
-  fi
+  branch="$(git -C "$repo" symbolic-ref --quiet --short HEAD || true)"   # empty = detached
 
   default_branch="$(git -C "$repo" symbolic-ref --quiet --short refs/remotes/origin/HEAD || true)"
   default_branch="${default_branch#origin/}"
@@ -111,7 +109,26 @@ for repo in "$CODE_DIR"/*/; do
   fi
 
   if [[ "$branch" != "$default_branch" ]]; then
-    log "  on '$branch' (default '$default_branch') — fetched only"
+    # Default branch not checked out: fast-forward its ref without touching
+    # the working tree. The non-forced refspec makes git refuse anything but
+    # a fast-forward, and refuse entirely if the branch is checked out in a
+    # worktree.
+    [[ -n "$branch" ]] && where="on '$branch'" || where="detached HEAD"
+    if ! git -C "$repo" rev-parse --quiet --verify "refs/heads/$default_branch" >/dev/null; then
+      log "  $where; no local '$default_branch' branch — fetched only"
+      continue
+    fi
+    before="$(git -C "$repo" rev-parse "refs/heads/$default_branch")"
+    if git -C "$repo" fetch origin "$default_branch:$default_branch"; then
+      after="$(git -C "$repo" rev-parse "refs/heads/$default_branch")"
+      if [[ "$before" != "$after" ]]; then
+        log "  $where; advanced '$default_branch' ${before:0:8} -> ${after:0:8}"
+      else
+        log "  $where; '$default_branch' already up to date"
+      fi
+    else
+      log "  WARN: could not fast-forward '$default_branch' (diverged from origin?)"
+    fi
     continue
   fi
 
