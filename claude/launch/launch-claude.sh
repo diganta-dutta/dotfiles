@@ -3,6 +3,11 @@
 #
 # For each config repo: auto-stash local changes, fast-forward pull, restore the
 # stash. If any repo actually advanced, re-run install.sh to refresh symlinks.
+#
+# For every other git repo under ~/code: always fetch, but only fast-forward
+# the checkout when the repo is clean AND on its default branch — unfinished
+# local work is never stashed or otherwise touched.
+#
 # Then open Claude.app. Failures are reported as warnings and NEVER block the
 # launch — you can always start working even offline or mid-conflict.
 #
@@ -17,8 +22,9 @@ set -uo pipefail   # deliberately NOT -e: we handle every error and warn-continu
 # GUI-launched apps get a minimal PATH; pin the tools we need.
 export PATH="/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin:${PATH:-}"
 
-DOTFILES="$HOME/code/dotfiles"
-AI_PROMPTS="$HOME/code/ai-prompts"
+CODE_DIR="$HOME/code"
+DOTFILES="$CODE_DIR/dotfiles"
+AI_PROMPTS="$CODE_DIR/ai-prompts"
 
 # Matches install.sh's built-in default ($HOME/code/ai-prompts); set explicitly
 # so the launcher stays correct even if that default ever changes.
@@ -74,6 +80,56 @@ for repo in "${REPOS[@]}"; do
     else
       log "  WARN: stash pop conflict in $repo — changes are safe in 'git stash list'"
     fi
+  fi
+done
+
+# Work repos: every other git repo under ~/code. Always fetch so remote-tracking
+# refs stay fresh; fast-forward only a clean checkout on the default branch.
+# Never auto-stash here — uncommitted work is left exactly as found.
+for repo in "$CODE_DIR"/*/; do
+  repo="${repo%/}"
+  [[ -d "$repo/.git" ]] || continue
+  [[ "$repo" == "$DOTFILES" || "$repo" == "$AI_PROMPTS" ]] && continue
+
+  log "Fetching $repo"
+  if ! git -C "$repo" fetch origin; then
+    log "  WARN: fetch failed (offline?)"
+    continue
+  fi
+
+  branch="$(git -C "$repo" symbolic-ref --quiet --short HEAD || true)"
+  if [[ -z "$branch" ]]; then
+    log "  detached HEAD — fetched only"
+    continue
+  fi
+
+  default_branch="$(git -C "$repo" symbolic-ref --quiet --short refs/remotes/origin/HEAD || true)"
+  default_branch="${default_branch#origin/}"
+  if [[ -z "$default_branch" ]]; then
+    log "  WARN: origin/HEAD not set (try 'git remote set-head origin -a') — fetched only"
+    continue
+  fi
+
+  if [[ "$branch" != "$default_branch" ]]; then
+    log "  on '$branch' (default '$default_branch') — fetched only"
+    continue
+  fi
+
+  if ! git -C "$repo" diff --quiet || ! git -C "$repo" diff --cached --quiet; then
+    log "  uncommitted changes — fetched only"
+    continue
+  fi
+
+  before="$(git -C "$repo" rev-parse HEAD 2>/dev/null || echo none)"
+  if git -C "$repo" merge --ff-only "origin/$branch"; then
+    after="$(git -C "$repo" rev-parse HEAD 2>/dev/null || echo none)"
+    if [[ "$before" != "$after" ]]; then
+      log "  updated ${before:0:8} -> ${after:0:8}"
+    else
+      log "  already up to date"
+    fi
+  else
+    log "  WARN: fast-forward failed (diverged from origin/$branch?)"
   fi
 done
 
