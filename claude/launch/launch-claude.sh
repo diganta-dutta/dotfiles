@@ -2,7 +2,9 @@
 # launch-claude.sh — pre-launch prep for the Claude desktop app.
 #
 # For each config repo: auto-stash local changes, fast-forward pull, restore the
-# stash. If any repo actually advanced, re-run install.sh to refresh symlinks.
+# stash. Then always re-run install.sh to refresh symlinks — it's idempotent, and
+# running it unconditionally keeps links correct even when a repo advanced outside
+# this launcher (e.g. a manual 'git pull').
 #
 # Guard: if this script's own source file has uncommitted edits, the dotfiles
 # sync is skipped entirely. Otherwise the auto-stash/pull/pop would replay those
@@ -48,8 +50,6 @@ OPEN_APP=1
 
 log() { printf '[claude-prep] %s\n' "$*"; }
 
-changed=0
-
 for repo in "${REPOS[@]}"; do
   if [[ ! -d "$repo/.git" ]]; then
     log "WARN: $repo is not a git repo — skipping"
@@ -86,7 +86,6 @@ for repo in "${REPOS[@]}"; do
   if git -C "$repo" pull --ff-only origin "$branch"; then
     after="$(git -C "$repo" rev-parse HEAD 2>/dev/null || echo none)"
     if [[ "$before" != "$after" ]]; then
-      changed=1
       log "  updated ${before:0:8} -> ${after:0:8}"
     else
       log "  already up to date"
@@ -169,15 +168,14 @@ for repo in "$CODE_DIR"/*/; do
   fi
 done
 
-if [[ "$changed" == 1 ]]; then
-  if [[ -x "$DOTFILES/install.sh" ]]; then
-    log "Repo changes detected — running install.sh"
-    "$DOTFILES/install.sh" || log "WARN: install.sh exited non-zero"
-  else
-    log "WARN: install.sh missing or not executable at $DOTFILES/install.sh"
-  fi
+# Always run install.sh — it's idempotent, and running it unconditionally keeps
+# symlinks correct even when a repo advanced outside this launcher (e.g. a manual
+# 'git pull'), where the launcher would otherwise see "no change" and skip it.
+if [[ -x "$DOTFILES/install.sh" ]]; then
+  log "Refreshing symlinks — running install.sh"
+  "$DOTFILES/install.sh" || log "WARN: install.sh exited non-zero"
 else
-  log "No repo changes — skipping install.sh"
+  log "WARN: install.sh missing or not executable at $DOTFILES/install.sh"
 fi
 
 if [[ "$OPEN_APP" == 1 ]]; then
