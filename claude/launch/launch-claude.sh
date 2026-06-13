@@ -4,6 +4,12 @@
 # For each config repo: auto-stash local changes, fast-forward pull, restore the
 # stash. If any repo actually advanced, re-run install.sh to refresh symlinks.
 #
+# Guard: if this script's own source file has uncommitted edits, the dotfiles
+# sync is skipped entirely. Otherwise the auto-stash/pull/pop would replay those
+# edits onto a freshly fast-forwarded tip and — when upstream touched the same
+# lines — leave conflict markers in the very file that's running. Commit or stash
+# the launcher first, then re-launch.
+#
 # For every other git repo under ~/code: always fetch, but only fast-forward
 # the checkout when the repo is clean AND on its default branch — unfinished
 # local work is never stashed or otherwise touched. When some other branch (or
@@ -34,6 +40,9 @@ export AI_PROMPTS_REPO="$AI_PROMPTS"
 
 REPOS=("$DOTFILES" "$AI_PROMPTS")
 
+# This launcher's own tracked path within the dotfiles repo (see guard below).
+SELF_REL="claude/launch/launch-claude.sh"
+
 OPEN_APP=1
 [[ "${1:-}" == "--no-open" ]] && OPEN_APP=0
 
@@ -44,6 +53,16 @@ changed=0
 for repo in "${REPOS[@]}"; do
   if [[ ! -d "$repo/.git" ]]; then
     log "WARN: $repo is not a git repo — skipping"
+    continue
+  fi
+
+  # Never sync the dotfiles repo while this very script is dirty: stashing and
+  # popping it across a fast-forward is what produces a self-conflict.
+  if [[ "$repo" == "$DOTFILES" ]] \
+     && { ! git -C "$repo" diff --quiet -- "$SELF_REL" \
+          || ! git -C "$repo" diff --cached --quiet -- "$SELF_REL"; }; then
+    log "WARN: $SELF_REL has uncommitted changes — skipping $repo sync to avoid"
+    log "      a self-modifying stash/pull conflict. Commit or stash it, then re-launch."
     continue
   fi
 
