@@ -2,8 +2,9 @@
 # make-launcher-app.sh — (re)build "~/Applications/Claude Launcher.app".
 #
 # The launcher is a thin app bundle whose only job is to run launch-claude.sh,
-# tee its output to a log, surface a notification if anything warned, and copy
-# Claude.app's icon so it looks identical in the dock. Idempotent: rebuilds the
+# tee its output to a log, surface an actionable warning (a clickable banner via
+# terminal-notifier, or a dialog with an "Open Log" button) if anything warned,
+# and copy Claude.app's icon so it looks identical in the dock. Idempotent: rebuilds the
 # bundle from scratch each run. Run this once after cloning, or re-run after
 # editing the template below.
 
@@ -38,7 +39,17 @@ out="\$("\${PREP}" 2>&1)"
 } >> "\${LOG}"
 
 if printf '%s' "\${out}" | grep -q 'WARN'; then
-  /usr/bin/osascript -e 'display notification "Sync had warnings — see ~/.claude/logs/launch-claude.log" with title "Claude Launcher"' >/dev/null 2>&1 || true
+  # A plain 'display notification' banner can't carry a click action — clicking
+  # it does nothing useful. So make the warning actionable instead:
+  #   - terminal-notifier (if installed): a real clickable banner whose click
+  #     opens the log file.
+  #   - otherwise: a native dialog with an "Open Log" button.
+  if command -v terminal-notifier >/dev/null 2>&1; then
+    terminal-notifier -title "Claude Launcher" -message "Sync had warnings — click to open the log" -execute "/usr/bin/open '\${LOG}'" >/dev/null 2>&1 || true
+  else
+    btn="\$(/usr/bin/osascript -e 'display dialog "Claude Launcher sync had warnings." with title "Claude Launcher" buttons {"Dismiss", "Open Log"} default button "Open Log" with icon caution' -e 'button returned of result' 2>/dev/null)" || true
+    [ "\${btn}" = "Open Log" ] && /usr/bin/open "\${LOG}" >/dev/null 2>&1 || true
+  fi
 fi
 EOF
 chmod +x "${APP}/Contents/MacOS/launcher"
