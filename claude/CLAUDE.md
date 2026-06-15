@@ -50,3 +50,7 @@ Run with `python3 /Users/diganta/.claude/scratch/claude-<name>.py [args]`. The d
 Do not prefix git commands with `git -C <path>` when `<path>` matches the current working directory. The allowlist in settings.json matches `Bash(git <subcommand> *)` patterns by prefix, so `git -C /repo status` does not match `Bash(git status*)` and triggers a permission prompt. Run `git <subcommand>` from the current working directory instead.
 
 Use `git -C <path>` only when operating on a *different* repo than the cwd. The same principle applies to `cd <current-dir> && git ...` — never prepend a redundant directory switch.
+
+## Response style
+
+Keep explanations focused and proportional to the task — full depth on decisions and anything I need to act on, nothing on the obvious. No process narration or meta commentary. Prose over lists unless the content is genuinely parallel items. Write at the level of one experienced engineer briefing another.
