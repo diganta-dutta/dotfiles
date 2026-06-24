@@ -4,9 +4,6 @@
       "Read",
       "Edit",
       "Write",
-      "Read(~/.claude/scratch/**)",
-      "Edit(~/.claude/scratch/**)",
-      "Write(~/.claude/scratch/**)",
       "Bash(git add *)",
       "Bash(git commit *)",
       "Bash(git checkout *)",
@@ -118,8 +115,8 @@
       "WebFetch(domain:github.com)",
       "WebFetch(domain:idrive-com.atlassian.net)",
       "WebSearch",
-      "mcp__github__create_pull_request_review",
-      "mcp__github__create_and_submit_pull_request_review"
+      "mcp__github__pull_request_review_write",
+      "mcp__github__add_comment_to_pending_review"
     ],
     "deny": [
       "Read(.env)",
@@ -129,10 +126,22 @@
       "Read(~/.ssh/**)",
       "Read(~/.aws/**)",
       "Read(~/.config/.jira/**)",
+      "Bash(cat *.env)",
+      "Bash(cat *.env.*)",
+      "Bash(cat *.pem)",
+      "Bash(cat *.key)",
+      "Bash(cat ~/.ssh/*)",
+      "Bash(cat ~/.aws/*)",
+      "Bash(cat ~/.config/.jira/*)",
+      "Bash(head *.env*)",
+      "Bash(tail *.env*)",
       "Bash(rm -rf *)",
+      "Bash(rm -fr *)",
       "Bash(sudo *)",
       "Bash(curl * | sh*)",
-      "Bash(wget * | sh*)"
+      "Bash(curl * | bash*)",
+      "Bash(wget * | sh*)",
+      "Bash(wget * | bash*)"
     ],
     "ask": [
       "Bash(git push *)",
