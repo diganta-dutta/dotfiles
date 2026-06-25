@@ -1,0 +1,180 @@
+#!/usr/bin/env bash
+#
+# review-queue — discovery + execution workhorse for the batch PR-review fleet.
+#
+# Two modes:
+#   review-queue --list-json     Emit a JSON array of eligible PRs (never runs claude).
+#   review-queue --run <url>     Review ONE PR; stream claude's JSON events to stdout.
+#
+# Env overrides:
+#   CODE_ROOT   local checkout root         (default: $HOME/code)
+#   SLASH_CMD   review slash command name   (default: /review-pr)
+#
+set -euo pipefail
+
+CODE_ROOT="${CODE_ROOT:-$HOME/code}"
+SLASH_CMD="${SLASH_CMD:-/review-pr}"
+
+# ---- dependency guard -------------------------------------------------------
+for dep in gh jq claude git; do
+  command -v "$dep" >/dev/null 2>&1 || {
+    echo "review-queue: missing required dependency: $dep" >&2
+    exit 127
+  }
+done
+
+usage() {
+  cat >&2 <<'EOF'
+usage:
+  review-queue --list-json        emit JSON array of eligible PRs (no claude)
+  review-queue --run <pr-url>     review one PR, stream JSON events to stdout
+EOF
+}
+
+# ---- re-review gate ---------------------------------------------------------
+# Decides whether a PR still needs a review from ME, and *why*.
+# Prints a reason token to stdout and returns 0 when eligible; returns 1 otherwise.
+#
+# Always prints a reason token to stdout; returns 0 if a (re-)review is needed,
+# 1 if not. Eligible tokens:
+#   never_reviewed                       — I have no review on this PR yet
+#   new_commits_since_changes_requested  — I requested changes; head has moved past my review's commit
+#   prior_review_not_approved            — my last review was COMMENTED/DISMISSED (re-review)
+# Skip tokens:
+#   approved                             — my last review APPROVED this head
+#   changes_requested_no_new_commits     — I requested changes; head hasn't moved
+#
+# GitHub review-state reasoning kept verbatim from the supplied gate: compare the
+# PR head SHA against the commit_id of my most-recent review, and treat
+# never-reviewed distinctly from re-requested.
+review_reason() {
+  local repo="$1" num="$2" head reviews mystate mycommit
+  head=$(gh pr view "$num" --repo "$repo" --json headRefOid --jq .headRefOid)
+  reviews=$(gh api "repos/$repo/pulls/$num/reviews" --paginate \
+    --jq "[.[] | select(.user.login==\"$ME\")] | sort_by(.submitted_at)")
+  [[ "$(echo "$reviews" | jq 'length')" -eq 0 ]] && { echo "never_reviewed"; return 0; }  # never reviewed
+  mystate=$(echo "$reviews" | jq -r '.[-1].state')
+  mycommit=$(echo "$reviews" | jq -r '.[-1].commit_id')
+  case "$mystate" in
+    APPROVED)          echo "approved"; return 1 ;;                 # done
+    CHANGES_REQUESTED)
+      if [[ "$head" != "$mycommit" ]]; then
+        echo "new_commits_since_changes_requested"; return 0
+      else
+        echo "changes_requested_no_new_commits"; return 1
+      fi ;;
+    *)                 echo "prior_review_not_approved"; return 0 ;; # commented/dismissed
+  esac
+}
+
+# ---- MODE A: discovery + gating --------------------------------------------
+# Emits a single JSON object on stdout:
+#   { "eligible": [ {repo,name,number,url,title,reason}, ... ],
+#     "skipped":  [ {repo,name,number,url,title,reason}, ... ] }
+# Every requested-review PR lands in exactly one bucket. Human diagnostics still
+# go to stderr. Never invokes claude.
+list_json() {
+  ME=$(gh api user --jq .login)
+
+  local prs
+  # All open PRs where I'm a requested reviewer.
+  prs=$(gh search prs --review-requested=@me --state=open \
+    --json repository,number,url,title --limit 100)
+
+  # Each PR is emitted as one compact, _bucket-tagged JSON object; the final jq
+  # partitions the stream into the eligible/skipped arrays (empty -> []).
+  emit() {  # emit <bucket> <reason>
+    jq -nc \
+      --arg    bucket "$1" \
+      --arg    reason "$2" \
+      --arg    repo   "$repo" \
+      --arg    name   "$name" \
+      --argjson number "$num" \
+      --arg    url    "$url" \
+      --arg    title  "$title" \
+      '{_bucket:$bucket, repo:$repo, name:$name, number:$number, url:$url, title:$title, reason:$reason}'
+  }
+
+  echo "$prs" | jq -c '.[]' | while read -r pr; do
+    local repo name num url title dir reason
+    repo=$(jq -r '.repository.nameWithOwner' <<<"$pr")
+    name=$(jq -r '.repository.name'          <<<"$pr")
+    num=$(jq  -r '.number'                   <<<"$pr")
+    url=$(jq  -r '.url'                       <<<"$pr")
+    title=$(jq -r '.title'                    <<<"$pr")
+
+    dir="$CODE_ROOT/$name"
+    if [[ ! -d "$dir" ]]; then
+      echo "skip $repo#$num — no local checkout at $dir" >&2
+      emit skipped no_local_checkout
+      continue
+    fi
+
+    # CI gate: `gh pr checks` exits non-zero on any failing/pending check
+    # (and on PRs with no checks at all).
+    if ! gh pr checks "$num" --repo "$repo" >/dev/null 2>&1; then
+      echo "skip $repo#$num — CI not green" >&2
+      emit skipped ci_not_green
+      continue
+    fi
+
+    if reason=$(review_reason "$repo" "$num"); then
+      emit eligible "$reason"
+    else
+      echo "skip $repo#$num — already reviewed ($reason)" >&2
+      emit skipped "$reason"
+    fi
+  done | jq -s '{
+    eligible: [ .[] | select(._bucket == "eligible") | del(._bucket) ],
+    skipped:  [ .[] | select(._bucket == "skipped")  | del(._bucket) ]
+  }'
+}
+
+# ---- MODE B: run one review -------------------------------------------------
+run_one() {
+  local url="$1" owner name num repo dir
+  if [[ ! "$url" =~ ^https://github\.com/([^/]+)/([^/]+)/pull/([0-9]+) ]]; then
+    echo "review-queue: not a recognizable GitHub PR URL: $url" >&2
+    exit 2
+  fi
+  owner="${BASH_REMATCH[1]}"
+  name="${BASH_REMATCH[2]}"
+  num="${BASH_REMATCH[3]}"
+  repo="$owner/$name"
+  dir="$CODE_ROOT/$name"
+
+  if [[ ! -d "$dir" ]]; then
+    echo "review-queue: no local checkout at $dir for $repo#$num" >&2
+    exit 3
+  fi
+
+  cd "$dir"
+  git fetch origin "pull/$num/head:pr-$num" --force --quiet 2>/dev/null || true
+  git checkout "pr-$num" --quiet 2>/dev/null || true
+
+  # exec: claude's stdout becomes this script's stdout (unbuffered passthrough)
+  # and claude's exit code becomes ours.
+  exec claude -p "$SLASH_CMD $url" \
+    --permission-mode auto \
+    --output-format stream-json \
+    --verbose
+}
+
+# ---- dispatch ---------------------------------------------------------------
+case "${1:-}" in
+  --list-json)
+    [[ $# -eq 1 ]] || { usage; exit 2; }
+    list_json
+    ;;
+  --run)
+    [[ $# -eq 2 ]] || { usage; exit 2; }
+    run_one "$2"
+    ;;
+  -h|--help)
+    usage
+    ;;
+  *)
+    usage
+    exit 2
+    ;;
+esac
