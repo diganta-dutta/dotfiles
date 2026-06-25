@@ -153,5 +153,6 @@
     ],
     "defaultMode": "acceptEdits"
   },
-  "agentPushNotifEnabled": true
+  "agentPushNotifEnabled": true,
+  "tui": "fullscreen"
 }
