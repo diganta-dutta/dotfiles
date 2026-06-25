@@ -80,11 +80,15 @@ final class PRReview: ObservableObject, Identifiable {
 
     func ingest(_ data: Data) {
         let new = parser.consume(data)
-        if !new.isEmpty { items.append(contentsOf: new) }
+        if !new.isEmpty {
+            items.append(contentsOf: new)
+            items = dedupedFinalSummary(items)
+        }
     }
 
     func finish(_ code: Int32) {
         items.append(contentsOf: parser.flush())
+        items = dedupedFinalSummary(items)
         exitCode = code
         let sawSuccess = items.contains {
             if case .finished(true, _) = $0 { return true } else { return false }

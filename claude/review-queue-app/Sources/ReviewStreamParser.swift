@@ -174,3 +174,23 @@ public final class ReviewStreamParser {
         }
     }
 }
+
+/// Claude Code's terminal `result` text is the model's final assistant message —
+/// the same content that already streamed as the last assistant-text block. When
+/// they match, blank the finished summary so the completion banner shows status
+/// only and the review isn't displayed twice. A genuinely different summary
+/// (e.g. an auth-error string) is left intact.
+public func dedupedFinalSummary(_ items: [RenderItem]) -> [RenderItem] {
+    guard let last = items.indices.last,
+          case .finished(let ok, let summary) = items[last],
+          !summary.isEmpty else { return items }
+    let priorText = items[..<last].reversed().lazy.compactMap { item -> String? in
+        if case .assistantText(let t) = item { return t }
+        return nil
+    }.first
+    func norm(_ s: String) -> String { s.trimmingCharacters(in: .whitespacesAndNewlines) }
+    guard let priorText, norm(priorText) == norm(summary) else { return items }
+    var out = items
+    out[last] = .finished(success: ok, summary: "")
+    return out
+}
