@@ -2,9 +2,11 @@
 #
 # review-queue — discovery + execution workhorse for the batch PR-review fleet.
 #
-# Two modes:
+# Modes:
 #   review-queue --list-json     Emit a JSON array of eligible PRs (never runs claude).
 #   review-queue --run <url>     Review ONE PR; stream claude's JSON events to stdout.
+#   review-queue --verdict <url> Emit my latest review state on a PR as JSON (no claude).
+#   review-queue --rate-reset    Emit the epoch when exhausted gh rate limits recover.
 #
 # Env overrides:
 #   CODE_ROOT   local checkout root         (default: $HOME/code)
@@ -28,7 +30,21 @@ usage() {
 usage:
   review-queue --list-json        emit JSON array of eligible PRs (no claude)
   review-queue --run <pr-url>     review one PR, stream JSON events to stdout
+  review-queue --verdict <pr-url> emit my latest review state as JSON (no claude)
+  review-queue --rate-reset       emit epoch when exhausted gh rate limits recover
 EOF
+}
+
+# Parse a GitHub PR URL into owner/name/number. Sets globals; exits 2 on mismatch.
+parse_pr_url() {
+  if [[ ! "$1" =~ ^https://github\.com/([^/]+)/([^/]+)/pull/([0-9]+) ]]; then
+    echo "review-queue: not a recognizable GitHub PR URL: $1" >&2
+    exit 2
+  fi
+  P_OWNER="${BASH_REMATCH[1]}"
+  P_NAME="${BASH_REMATCH[2]}"
+  P_NUM="${BASH_REMATCH[3]}"
+  P_REPO="$P_OWNER/$P_NAME"
 }
 
 # ---- re-review gate ---------------------------------------------------------
@@ -132,19 +148,14 @@ list_json() {
 
 # ---- MODE B: run one review -------------------------------------------------
 run_one() {
-  local url="$1" owner name num repo dir
-  if [[ ! "$url" =~ ^https://github\.com/([^/]+)/([^/]+)/pull/([0-9]+) ]]; then
-    echo "review-queue: not a recognizable GitHub PR URL: $url" >&2
-    exit 2
-  fi
-  owner="${BASH_REMATCH[1]}"
-  name="${BASH_REMATCH[2]}"
-  num="${BASH_REMATCH[3]}"
-  repo="$owner/$name"
+  local url="$1" name num dir
+  parse_pr_url "$url"
+  name="$P_NAME"
+  num="$P_NUM"
   dir="$CODE_ROOT/$name"
 
   if [[ ! -d "$dir" ]]; then
-    echo "review-queue: no local checkout at $dir for $repo#$num" >&2
+    echo "review-queue: no local checkout at $dir for $P_REPO#$num" >&2
     exit 3
   fi
 
@@ -160,6 +171,38 @@ run_one() {
     --verbose
 }
 
+# ---- MODE C: my latest review verdict on one PR -----------------------------
+# Emits {"state": "...", "submitted_at": "..."} for my most-recent review, where
+# state is APPROVED | CHANGES_REQUESTED | COMMENTED | DISMISSED | NONE. The app
+# calls this after an auto-run to record the posted verdict (ground truth, not a
+# transcript guess). Never invokes claude.
+verdict_one() {
+  parse_pr_url "$1"
+  ME=$(gh api user --jq .login)
+  local reviews
+  reviews=$(gh api "repos/$P_REPO/pulls/$P_NUM/reviews" --paginate \
+    --jq "[.[] | select(.user.login==\"$ME\")] | sort_by(.submitted_at)")
+  if [[ "$(echo "$reviews" | jq 'length')" -eq 0 ]]; then
+    echo '{"state":"NONE","submitted_at":null}'
+  else
+    echo "$reviews" | jq -c '.[-1] | {state, submitted_at}'
+  fi
+}
+
+# ---- MODE D: rate-limit recovery time ---------------------------------------
+# When a gh call fails with a rate-limit error, the app calls this to learn when
+# to resume. Prints the epoch (seconds) at which the *latest* currently-exhausted
+# REST resource resets, so resuming then clears every primary limit we hit. Prints
+# nothing if no resource shows remaining==0 (e.g. a secondary limit, which the
+# rate_limit endpoint doesn't report) — the app then applies its own backoff.
+# The rate_limit endpoint does not itself count against any limit.
+rate_reset() {
+  gh api rate_limit --jq '
+    [ .resources | to_entries[] | select(.value.remaining == 0) | .value.reset ]
+    | if length > 0 then max else empty end
+  ' 2>/dev/null || true
+}
+
 # ---- dispatch ---------------------------------------------------------------
 case "${1:-}" in
   --list-json)
@@ -169,6 +212,14 @@ case "${1:-}" in
   --run)
     [[ $# -eq 2 ]] || { usage; exit 2; }
     run_one "$2"
+    ;;
+  --verdict)
+    [[ $# -eq 2 ]] || { usage; exit 2; }
+    verdict_one "$2"
+    ;;
+  --rate-reset)
+    [[ $# -eq 1 ]] || { usage; exit 2; }
+    rate_reset
     ;;
   -h|--help)
     usage

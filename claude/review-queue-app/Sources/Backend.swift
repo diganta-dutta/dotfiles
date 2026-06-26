@@ -68,10 +68,27 @@ struct ListResult: Decodable {
     let skipped: [SkippedPR]
 }
 
+/// `review-queue --verdict <url>` — my latest posted review state on a PR.
+/// `state` is APPROVED | CHANGES_REQUESTED | COMMENTED | DISMISSED | NONE.
+struct ReviewVerdict: Decodable {
+    let state: String
+    let submitted_at: String?
+}
+
 enum ProcessRunner {
     private static func pinnedEnvironment() -> [String: String] {
         var e = ProcessInfo.processInfo.environment
         e["PATH"] = Paths.pinnedPATH
+        // Scrub variables injected by an enclosing Claude Code session. If this app
+        // is launched from within a `claude` session (or from a terminal that is),
+        // these leak into the `claude -p` we spawn and force it to authenticate as a
+        // nested session — which fails with `401 Invalid authentication credentials`.
+        // Removing them lets the spawned claude fall back to keychain OAuth as a
+        // clean login, so reviews work regardless of how the app was launched.
+        for key in Array(e.keys)
+            where key.hasPrefix("CLAUDE_") || key.hasPrefix("ANTHROPIC_") || key == "CLAUDECODE" {
+            e.removeValue(forKey: key)
+        }
         return e
     }
 

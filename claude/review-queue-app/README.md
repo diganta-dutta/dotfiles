@@ -5,6 +5,12 @@ GitHub repos. A thin SwiftUI front-end over `review-queue` (a bash workhorse) an
 a stream-json parser. Discovers PRs awaiting your review, lets you deselect a
 subset, then runs the reviews — serial by default — streaming each one live.
 
+It can also run **unattended**: turn on Auto-review and it polls on an interval,
+reviews every eligible PR, and drops each result (verdict + transcript) into an
+in-memory **inbox** you dismiss manually. The menu-bar item badges the count of
+undismissed results. On a GitHub rate limit it pauses, surfaces the reason and
+resume time, and resumes on its own.
+
 ## Components
 
 ```
@@ -53,6 +59,31 @@ registered with Launch Services.
 5. **Open in Desktop** on a PR opens Terminal in that repo and runs `claude`
    interactively (no `-p`) seeded with `/review-pr <url>`.
 
+### Auto-review
+
+Toggle **Auto-review** in the header (or the menu-bar menu) and pick an interval.
+On each tick it runs discovery (skipping the git-pull preamble — too heavy to run
+every interval) and reviews every eligible PR unattended. The posted verdict
+(approved / changes requested / commented) is read back from GitHub via
+`--verdict`, not guessed from the transcript, and each result lands in the
+**Auto-review inbox** tab: verdict, timestamp, a re-review tag when applicable,
+the captured transcript (View transcript), and Open on GitHub. The inbox is
+in-memory only — results survive refreshes but not a quit — and entries clear
+only when you dismiss them. The menu-bar badge shows the undismissed count.
+
+Reviews post as **formal reviews** with whatever verdict `/review-pr` decides
+(including approve/request-changes) — there is no comment-only clamp and no
+pre-post staging. The inbox is an after-the-fact record, not an approval gate.
+
+While Auto-review is on the app holds a `userInitiatedAllowingIdleSystemSleep`
+activity assertion so the poll timer keeps firing on a **locked** Mac; a
+*sleeping* Mac is intentionally allowed to suspend it.
+
+On a GitHub rate limit, discovery (and verdict reads) pause: an amber banner
+shows the resume time (from `--rate-reset`, or a 2-minute fallback for secondary
+limits the API doesn't report), and a one-shot timer resumes automatically.
+**Resume now** overrides it.
+
 Env overrides: `REVIEW_QUEUE_BIN` (backend path), `LAUNCH_CLAUDE_BIN` (preamble
 path), `CODE_ROOT` (checkout root), `REVIEW_QUEUE_NO_AUTO_REFRESH=1` (boot the UI
 without running the preamble/discovery).
@@ -64,7 +95,15 @@ The GUI is optional; `review-queue` works standalone.
 ```bash
 ./review-queue --list-json        # {eligible:[...], skipped:[...]} on stdout, diagnostics on stderr
 ./review-queue --run <pr-url>     # one review, stream-json events on stdout; exit code = claude's
+./review-queue --verdict <pr-url> # {"state":...,"submitted_at":...} — my latest review on this PR
+./review-queue --rate-reset       # epoch when exhausted gh rate limits recover (empty if none)
 ```
+
+`--verdict` emits my most-recent review `state` (`APPROVED` /
+`CHANGES_REQUESTED` / `COMMENTED` / `DISMISSED` / `NONE`); the app calls it after
+an auto-run to record the posted verdict. `--rate-reset` prints the latest reset
+epoch among currently-exhausted REST resources (nothing if none are exhausted —
+e.g. a secondary limit). Neither invokes claude.
 
 `--list-json` emits a single object: `{ "eligible": [...], "skipped": [...] }`,
 each entry `{repo, name, number, url, title, reason}`. Every open PR where you're
@@ -88,7 +127,28 @@ that regression test back.
 
 ## Note on auth
 
-`claude -p` reads keychain OAuth like an interactive terminal — but **fails with
-a 401 when spawned from inside another Claude Code session**. Launch the app from
-Finder/`open` (a normal login context), not from within a Claude session, or
-reviews will all fail with no events.
+`claude -p` authenticates from the macOS keychain (`Claude Code-credentials`),
+the same credential an interactive `claude` uses. Two failure modes to know about:
+
+**Inherited session env.** A `claude -p` spawned with another Claude Code
+session's environment (`ANTHROPIC_*`, `CLAUDE_CODE_*`, `CLAUDECODE`) tries to
+authenticate as a *nested* session and fails with
+`401 Invalid authentication credentials`. The app guards against this:
+`ProcessRunner.pinnedEnvironment()` strips every `CLAUDE_*` / `ANTHROPIC_*` /
+`CLAUDECODE` variable before spawning, so reviews authenticate as a clean
+keychain login no matter how the app (or a terminal that launched it) was
+started. Note this deliberately also removes `ANTHROPIC_API_KEY` — if you ever
+want to drive the app with an explicit API-key env var instead of the keychain,
+that key must be exempted from the scrub.
+
+**Token validity.** OAuth access tokens expire on their own; a `401` with no
+config change usually means the token lapsed. Re-auth from a normal Terminal
+(`claude auth`, or run `claude` once interactively), then `claude -p "say ok"`
+should succeed.
+
+**Recommended for auto-review: a long-lived token.** Because auto-review runs
+unattended, it shouldn't depend on short-lived-OAuth refresh timing. Run
+`claude setup-token` (requires a Claude subscription) once to install a
+long-lived token in the keychain; spawned `claude -p` reads it automatically (no
+env var needed, so the scrub above doesn't touch it), and unattended runs stop
+failing whenever a session token would otherwise have expired.

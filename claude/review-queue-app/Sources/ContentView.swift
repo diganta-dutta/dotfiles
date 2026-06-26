@@ -3,19 +3,31 @@
 // per-PR live-streaming transcript detail pane.
 
 import SwiftUI
+import AppKit
 
 struct ContentView: View {
     @EnvironmentObject var model: AppModel
     @State private var selection: String?
+    @State private var tab: Tab = .queue
+
+    enum Tab: Hashable { case queue, inbox }
 
     var body: some View {
         VStack(spacing: 0) {
             header
+            if model.rateLimitedUntil != nil { rateLimitBanner }
             Divider()
-            NavigationSplitView {
-                sidebar.navigationSplitViewColumnWidth(min: 280, ideal: 320, max: 420)
-            } detail: {
-                detail
+            tabPicker
+            Divider()
+            switch tab {
+            case .queue:
+                NavigationSplitView {
+                    sidebar.navigationSplitViewColumnWidth(min: 280, ideal: 320, max: 420)
+                } detail: {
+                    detail
+                }
+            case .inbox:
+                InboxView()
             }
         }
         .frame(minWidth: 860, minHeight: 560)
@@ -30,6 +42,35 @@ struct ContentView: View {
         .onChange(of: model.reviews.map(\.id)) { _, ids in
             if selection == nil || !(ids.contains(selection!)) { selection = ids.first }
         }
+    }
+
+    private var tabPicker: some View {
+        Picker("", selection: $tab) {
+            Text("Live queue (\(model.reviews.count))").tag(Tab.queue)
+            Text("Auto-review inbox (\(model.inbox.count))").tag(Tab.inbox)
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+    }
+
+    private var rateLimitBanner: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "clock.badge.exclamationmark")
+                .foregroundStyle(.orange)
+            Text(model.rateLimitedUntil.map {
+                "GitHub rate limit reached. Auto-review paused until \(AppModel.timeFmt.string(from: $0)), then resumes on its own."
+            } ?? "")
+                .font(.callout)
+                .foregroundStyle(.primary)
+            Spacer()
+            Button("Resume now") { model.resumeFromRateLimit() }
+                .controlSize(.small)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(Color.orange.opacity(0.12))
     }
 
     // MARK: Header controls
@@ -54,6 +95,21 @@ struct ContentView: View {
                 .pickerStyle(.menu)
                 .fixedSize()
                 .disabled(model.isBusy)
+
+                Divider().frame(height: 16)
+
+                Toggle("Auto-review", isOn: $model.autoMode)
+                    .toggleStyle(.switch)
+                    .controlSize(.small)
+                Picker("every", selection: $model.autoIntervalMinutes) {
+                    Text("5 min").tag(5)
+                    Text("15 min").tag(15)
+                    Text("30 min").tag(30)
+                    Text("60 min").tag(60)
+                }
+                .pickerStyle(.menu)
+                .fixedSize()
+                .disabled(!model.autoMode)
 
                 Spacer()
 
@@ -290,5 +346,123 @@ struct ContentUnavailable: View {
     var body: some View {
         VStack { Spacer(); Text(text).foregroundStyle(.secondary); Spacer() }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+// MARK: - Auto-review inbox
+
+// The list of completed auto-reviews, each dismissed manually. In-memory only.
+struct InboxView: View {
+    @EnvironmentObject var model: AppModel
+    @State private var viewing: InboxEntry?
+
+    var body: some View {
+        if model.inbox.isEmpty {
+            ContentUnavailable(text: "No auto-reviews yet. Reviews run by auto-review show up here.")
+        } else {
+            VStack(spacing: 0) {
+                HStack {
+                    Text("\(model.inbox.count) awaiting dismissal")
+                        .font(.callout).foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Dismiss all") { model.dismissAll() }
+                        .controlSize(.small)
+                }
+                .padding(12)
+                Divider()
+                ScrollView {
+                    LazyVStack(spacing: 8) {
+                        ForEach(model.inbox) { entry in
+                            InboxRow(entry: entry, onView: { viewing = entry })
+                        }
+                    }
+                    .padding(12)
+                }
+            }
+            .sheet(item: $viewing) { entry in InboxTranscriptSheet(entry: entry) }
+        }
+    }
+}
+
+// One completed-review card: verdict, re-review tag, timestamp, and dismiss.
+struct InboxRow: View {
+    let entry: InboxEntry
+    let onView: () -> Void
+    @EnvironmentObject var model: AppModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .top, spacing: 8) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("\(entry.name) #\(entry.number)")
+                        .font(.system(.body).weight(.semibold))
+                    Text(entry.title).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                    if entry.isReReview {
+                        Label("re-review · \(reReasonLabel)", systemImage: "arrow.clockwise")
+                            .font(.caption2)
+                            .padding(.horizontal, 6).padding(.vertical, 1)
+                            .background(Capsule().fill(Color.orange.opacity(0.15)))
+                            .foregroundStyle(.orange)
+                    }
+                }
+                Spacer()
+                Label(entry.verdict.label, systemImage: entry.verdict.symbol)
+                    .font(.caption).foregroundStyle(entry.verdict.tint).labelStyle(.titleAndIcon)
+                Button { model.dismiss(entry) } label: { Image(systemName: "xmark") }
+                    .buttonStyle(.borderless).help("Dismiss")
+            }
+            HStack(spacing: 14) {
+                Text(entry.finishedAt, style: .time).font(.caption2).foregroundStyle(.secondary)
+                Button("View transcript", action: onView).buttonStyle(.link).controlSize(.small)
+                if let url = URL(string: entry.url) {
+                    Button("Open on GitHub") { NSWorkspace.shared.open(url) }
+                        .buttonStyle(.link).controlSize(.small)
+                }
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 8).fill(Color.secondary.opacity(0.06)))
+    }
+
+    private var reReasonLabel: String {
+        entry.reason == "new_commits_since_changes_requested"
+            ? "new commits since changes-requested" : "prior review not approved"
+    }
+}
+
+// The stored transcript for one completed auto-review, in a sheet.
+struct InboxTranscriptSheet: View {
+    let entry: InboxEntry
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("\(entry.name) #\(entry.number)").font(.headline)
+                    Text(entry.title).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
+                }
+                Spacer()
+                Label(entry.verdict.label, systemImage: entry.verdict.symbol)
+                    .foregroundStyle(entry.verdict.tint)
+                Button("Done") { dismiss() }
+            }
+            .padding(12)
+            Divider()
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 10) {
+                    if entry.items.isEmpty {
+                        Text("No transcript captured.").foregroundStyle(.secondary).padding(.top, 8)
+                    }
+                    ForEach(Array(entry.items.enumerated()), id: \.offset) { _, item in
+                        ItemView(item: item)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(12)
+            }
+        }
+        .frame(width: 720, height: 560)
     }
 }
