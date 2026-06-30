@@ -370,14 +370,23 @@ struct InboxView: View {
                 }
                 .padding(12)
                 Divider()
-                ScrollView {
-                    LazyVStack(spacing: 8) {
-                        ForEach(model.inbox) { entry in
-                            InboxRow(entry: entry, onView: { viewing = entry })
-                        }
+                // A List — not ScrollView { LazyVStack } — on purpose. The rows host
+                // AppKit-backed controls (`.link` / `.borderless` buttons), and those
+                // inside a LazyVStack drive SwiftUI's lazy size-estimation
+                // (LazyStack.measureEstimates) into a non-terminating layout-invalidation
+                // loop (100% CPU) once the list is scrolled. List virtualizes rows with a
+                // stable, non-lazy-estimate layout and hosts the same controls safely —
+                // it's what the live-queue sidebar uses for the same reason.
+                List {
+                    ForEach(model.inbox) { entry in
+                        InboxRow(entry: entry, onView: { viewing = entry })
+                            .listRowSeparator(.hidden)
+                            .listRowInsets(EdgeInsets(top: 4, leading: 12, bottom: 4, trailing: 12))
+                            .listRowBackground(Color.clear)
                     }
-                    .padding(12)
                 }
+                .listStyle(.plain)
+                .scrollContentBackground(.hidden)
             }
             .sheet(item: $viewing) { entry in InboxTranscriptSheet(entry: entry) }
         }
