@@ -136,19 +136,19 @@ struct ContentView: View {
     private var rateLimitBanner: some View {
         HStack(spacing: 8) {
             Image(systemName: "clock.badge.exclamationmark")
-                .foregroundStyle(.orange)
+                .foregroundStyle(Theme.warn)
             Text(model.rateLimitedUntil.map {
                 "GitHub rate limit reached. Auto-review paused until \(AppModel.timeFmt.string(from: $0)), then resumes on its own."
             } ?? "")
                 .font(.callout)
-                .foregroundStyle(.primary)
+                .foregroundStyle(Theme.ink)
             Spacer()
             Button("Resume now") { model.resumeFromRateLimit() }
                 .controlSize(.small)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
-        .background(Color.orange.opacity(0.12))
+        .background(Theme.warn.opacity(0.12))
     }
 
     // MARK: Unified lifecycle sidebar
@@ -170,7 +170,7 @@ struct ContentView: View {
                     Text(model.phase == .error ? "Discovery failed — see status above."
                                                : "No eligible PRs.")
                         .font(.callout)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Theme.ink2)
                 }
                 ForEach(toReview) { review in
                     PRRow(review: review, autoHint: queuedAutoHint).tag(review.id)
@@ -268,7 +268,7 @@ struct PRRow: View {
                 }
                 Text(review.title)
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Theme.ink2)
                     .lineLimit(2)
                 HStack(spacing: 6) {
                     Text(review.reasonLabel)
@@ -322,13 +322,13 @@ struct CompletedRow: View {
                             .foregroundStyle(Theme.warn)
                     }
                 }
-                Text(entry.title).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                Text(entry.title).font(.caption).foregroundStyle(Theme.ink2).lineLimit(2)
                 HStack(spacing: 8) {
                     Text(entry.verdict.label)
                         .font(.caption).fontWeight(.medium)
                         .foregroundStyle(entry.verdict.tint)
                     Text(entry.finishedAt, style: .time)
-                        .font(.caption2).foregroundStyle(.secondary)
+                        .font(.caption2).foregroundStyle(Theme.ink2)
                 }
             }
             Spacer()
@@ -347,16 +347,16 @@ struct SkippedRow: View {
         VStack(alignment: .leading, spacing: 2) {
             Text("\(skipped.name) #\(skipped.number)")
                 .font(.system(.body).weight(.medium))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Theme.ink2)
             Text(skipped.title)
                 .font(.caption)
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(Theme.ink3)
                 .lineLimit(1)
             Text(skipped.reasonLabel)
                 .font(.caption2)
                 .padding(.horizontal, 6).padding(.vertical, 1)
-                .background(Capsule().fill(Color.secondary.opacity(0.15)))
-                .foregroundStyle(.secondary)
+                .background(Capsule().fill(Theme.ink2.opacity(0.15)))
+                .foregroundStyle(Theme.ink2)
         }
         .padding(.vertical, 2)
         .opacity(0.6)
@@ -375,7 +375,7 @@ struct LiveTranscriptView: View {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("\(review.name) #\(review.number)").font(.headline)
-                    Text(review.title).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
+                    Text(review.title).font(.subheadline).foregroundStyle(Theme.ink2).lineLimit(1)
                 }
                 Spacer()
                 Label(review.state.label, systemImage: review.state.symbol)
@@ -410,7 +410,7 @@ struct CompletedTranscriptView: View {
                         Text("\(entry.name) #\(entry.number)").font(.headline)
                         SourceBadge(source: entry.source)
                     }
-                    Text(entry.title).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
+                    Text(entry.title).font(.subheadline).foregroundStyle(Theme.ink2).lineLimit(1)
                 }
                 Spacer()
                 Label(entry.verdict.label, systemImage: entry.verdict.symbol)
@@ -444,7 +444,7 @@ struct TranscriptScroll: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 10) {
                     if items.isEmpty {
-                        Text(emptyText).foregroundStyle(.secondary).padding(.top, 8)
+                        Text(emptyText).foregroundStyle(Theme.ink2).padding(.top, 8)
                     }
                     ForEach(Array(items.enumerated()), id: \.offset) { idx, item in
                         ItemView(item: item).id(idx)
@@ -519,7 +519,7 @@ struct ItemView: View {
 struct ContentUnavailable: View {
     let text: String
     var body: some View {
-        VStack { Spacer(); Text(text).foregroundStyle(.secondary); Spacer() }
+        VStack { Spacer(); Text(text).foregroundStyle(Theme.ink2); Spacer() }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }

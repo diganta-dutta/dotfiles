@@ -40,7 +40,7 @@ struct MarkdownView: View {
                 .font(.system(.callout, design: .monospaced))
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(8)
-                .background(RoundedRectangle(cornerRadius: 6).fill(Color.secondary.opacity(0.12)))
+                .background(RoundedRectangle(cornerRadius: 6).fill(Theme.ink2.opacity(0.12)))
 
         case .list(let items):
             VStack(alignment: .leading, spacing: 3) {
@@ -48,7 +48,7 @@ struct MarkdownView: View {
                     HStack(alignment: .top, spacing: 6) {
                         Text(item.marker)
                             .font(.body.monospacedDigit())
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(Theme.ink2)
                         Text(inlineMarkdown(item.text))
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
@@ -59,9 +59,9 @@ struct MarkdownView: View {
         case .quote(let text):
             HStack(alignment: .top, spacing: 8) {
                 RoundedRectangle(cornerRadius: 2)
-                    .fill(Color.secondary.opacity(0.4)).frame(width: 3)
+                    .fill(Theme.ink2.opacity(0.4)).frame(width: 3)
                 Text(inlineMarkdown(text))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Theme.ink2)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
 
