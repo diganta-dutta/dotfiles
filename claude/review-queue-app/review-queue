@@ -47,6 +47,41 @@ parse_pr_url() {
   P_REPO="$P_OWNER/$P_NAME"
 }
 
+# Ensure a local checkout of $repo exists at $dir, cloning it if missing.
+# Returns 0 when the checkout is present (already there or freshly cloned),
+# 1 when a required clone failed. Clone progress/errors go to stderr.
+ensure_checkout() {
+  local repo="$1" dir="$2"
+  [[ -d "$dir" ]] && return 0
+  echo "review-queue: cloning $repo -> $dir (no local checkout)" >&2
+  mkdir -p "$(dirname "$dir")"
+  gh repo clone "$repo" "$dir" -- --quiet >&2
+}
+
+# Classify a PR's CI status by its status-check rollup. Echoes one of:
+#   none      — no checks configured at all (do NOT skip; nothing to gate on)
+#   green     — every check completed successfully (SUCCESS/NEUTRAL/SKIPPED)
+#   not_green — at least one check is failing, pending, or otherwise not green
+# On a gh/jq error we can't classify, so we echo "none" and let the PR through
+# rather than skipping a PR we simply failed to inspect.
+ci_state() {
+  local repo="$1" num="$2"
+  gh pr view "$num" --repo "$repo" --json statusCheckRollup --jq '
+    .statusCheckRollup as $c
+    | if ($c | length) == 0 then "none"
+      else
+        ( [ $c[] |
+            if .__typename == "CheckRun" then
+              (.status == "COMPLETED"
+               and (.conclusion == "SUCCESS" or .conclusion == "NEUTRAL" or .conclusion == "SKIPPED"))
+            elif .__typename == "StatusContext" then
+              (.state == "SUCCESS")
+            else false end
+          ] | if all then "green" else "not_green" end )
+      end
+  ' 2>/dev/null || echo "none"
+}
+
 # ---- re-review gate ---------------------------------------------------------
 # Decides whether a PR still needs a review from ME, and *why*.
 # Prints a reason token to stdout and returns 0 when eligible; returns 1 otherwise.
@@ -120,15 +155,15 @@ list_json() {
     title=$(jq -r '.title'                    <<<"$pr")
 
     dir="$CODE_ROOT/$name"
-    if [[ ! -d "$dir" ]]; then
-      echo "skip $repo#$num — no local checkout at $dir" >&2
-      emit skipped no_local_checkout
+    if ! ensure_checkout "$repo" "$dir"; then
+      echo "skip $repo#$num — clone failed" >&2
+      emit skipped clone_failed
       continue
     fi
 
-    # CI gate: `gh pr checks` exits non-zero on any failing/pending check
-    # (and on PRs with no checks at all).
-    if ! gh pr checks "$num" --repo "$repo" >/dev/null 2>&1; then
+    # CI gate: skip only when a check is actually failing or pending. A PR with
+    # no CI configured at all (empty rollup) is left eligible — nothing to gate.
+    if [[ "$(ci_state "$repo" "$num")" == "not_green" ]]; then
       echo "skip $repo#$num — CI not green" >&2
       emit skipped ci_not_green
       continue
@@ -154,8 +189,8 @@ run_one() {
   num="$P_NUM"
   dir="$CODE_ROOT/$name"
 
-  if [[ ! -d "$dir" ]]; then
-    echo "review-queue: no local checkout at $dir for $P_REPO#$num" >&2
+  if ! ensure_checkout "$P_REPO" "$dir"; then
+    echo "review-queue: no local checkout at $dir for $P_REPO#$num (clone failed)" >&2
     exit 3
   fi
 

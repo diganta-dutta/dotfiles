@@ -1,36 +1,32 @@
-// ContentView.swift — the window UI: a controls header, a checklist sidebar
-// (the deselect-a-subset capability that justifies this being an app), and a
-// per-PR live-streaming transcript detail pane.
+// ContentView.swift — the window UI. A controls header, an optional auto-review
+// status strip, and a single flat sidebar that shows the whole review lifecycle
+// (To review → Running → Completed → Skipped) beside a detail pane that renders
+// whichever row is selected — a live-streaming transcript or an archived one.
 
 import SwiftUI
 import AppKit
 
 struct ContentView: View {
     @EnvironmentObject var model: AppModel
-    @State private var selection: String?
-    @State private var tab: Tab = .queue
-
-    enum Tab: Hashable { case queue, inbox }
 
     var body: some View {
         VStack(spacing: 0) {
             header
-            if model.rateLimitedUntil != nil { rateLimitBanner }
+            if model.rateLimitedUntil != nil {
+                rateLimitBanner
+            } else if model.autoMode {
+                autoStrip
+            }
             Divider()
-            tabPicker
-            Divider()
-            switch tab {
-            case .queue:
-                NavigationSplitView {
-                    sidebar.navigationSplitViewColumnWidth(min: 280, ideal: 320, max: 420)
-                } detail: {
-                    detail
-                }
-            case .inbox:
-                InboxView()
+            HSplitView {
+                sidebar
+                    .frame(minWidth: 300, idealWidth: 340, maxWidth: 460)
+                detail
+                    .frame(minWidth: 460, maxWidth: .infinity)
             }
         }
-        .frame(minWidth: 860, minHeight: 560)
+        .frame(minWidth: 900, minHeight: 560)
+        .tint(Theme.accent)   // primary buttons, checkboxes, switch, selection
         .onAppear {
             // REVIEW_QUEUE_NO_AUTO_REFRESH=1 boots the UI without running the
             // preamble/discovery (used for a side-effect-free smoke launch).
@@ -39,38 +35,13 @@ struct ContentView: View {
                 model.refresh()
             }
         }
-        .onChange(of: model.reviews.map(\.id)) { _, ids in
-            if selection == nil || !(ids.contains(selection!)) { selection = ids.first }
+        // Keep a valid selection: when the lists change and nothing (or something
+        // stale) is selected, fall to the first available row.
+        .onChange(of: model.reviews.map(\.id) + model.completed.map(\.id)) { _, ids in
+            if model.selection == nil || !ids.contains(model.selection!) {
+                model.selection = ids.first
+            }
         }
-    }
-
-    private var tabPicker: some View {
-        Picker("", selection: $tab) {
-            Text("Live queue (\(model.reviews.count))").tag(Tab.queue)
-            Text("Auto-review inbox (\(model.inbox.count))").tag(Tab.inbox)
-        }
-        .pickerStyle(.segmented)
-        .labelsHidden()
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-    }
-
-    private var rateLimitBanner: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "clock.badge.exclamationmark")
-                .foregroundStyle(.orange)
-            Text(model.rateLimitedUntil.map {
-                "GitHub rate limit reached. Auto-review paused until \(AppModel.timeFmt.string(from: $0)), then resumes on its own."
-            } ?? "")
-                .font(.callout)
-                .foregroundStyle(.primary)
-            Spacer()
-            Button("Resume now") { model.resumeFromRateLimit() }
-                .controlSize(.small)
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(Color.orange.opacity(0.12))
     }
 
     // MARK: Header controls
@@ -81,6 +52,7 @@ struct ContentView: View {
                 Button { model.refresh() } label: {
                     Label("Refresh", systemImage: "arrow.clockwise")
                 }
+                .buttonStyle(.bordered)
                 .disabled(model.isBusy)
 
                 Toggle("git-pull preamble", isOn: $model.runPreamble)
@@ -115,10 +87,11 @@ struct ContentView: View {
 
                 Button {
                     model.runSelected()
-                    selection = model.reviews.first(where: { $0.selected })?.id ?? selection
+                    model.selection = model.reviews.first(where: { $0.selected })?.id ?? model.selection
                 } label: {
                     Label("Run \(model.selectedCount) selected", systemImage: "play.fill")
                 }
+                .buttonStyle(.borderedProminent)
                 .keyboardShortcut(.return, modifiers: [.command])
                 .disabled(model.isBusy || model.selectedCount == 0)
             }
@@ -128,30 +101,100 @@ struct ContentView: View {
                 }
                 Text(model.statusLine)
                     .font(.callout)
-                    .foregroundStyle(model.phase == .error ? .red : .secondary)
+                    .foregroundStyle(model.phase == .error ? Theme.crit : Theme.ink2)
                     .lineLimit(1)
                     .truncationMode(.tail)
             }
         }
         .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.toolbarBG)
     }
 
-    // MARK: Sidebar checklist
+    // MARK: Status strips
+
+    private var autoStrip: some View {
+        HStack(spacing: 8) {
+            Circle().fill(Theme.good).frame(width: 7, height: 7)
+            Text(autoStripText).font(.callout).foregroundStyle(Theme.accentText)
+            Spacer()
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 7)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.accentSoft)
+    }
+
+    private var autoStripText: String {
+        let time = model.nextAutoCheck.map { AppModel.timeFmt.string(from: $0) } ?? "soon"
+        if model.phase == .running { return "Auto-review on · reviewing now…" }
+        let n = model.queuedCount
+        if n == 0 { return "Auto-review on · next check \(time) · nothing eligible yet." }
+        return "Auto-review on · next check \(time) · \(n) eligible will run automatically then."
+    }
+
+    private var rateLimitBanner: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "clock.badge.exclamationmark")
+                .foregroundStyle(.orange)
+            Text(model.rateLimitedUntil.map {
+                "GitHub rate limit reached. Auto-review paused until \(AppModel.timeFmt.string(from: $0)), then resumes on its own."
+            } ?? "")
+                .font(.callout)
+                .foregroundStyle(.primary)
+            Spacer()
+            Button("Resume now") { model.resumeFromRateLimit() }
+                .controlSize(.small)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(Color.orange.opacity(0.12))
+    }
+
+    // MARK: Unified lifecycle sidebar
+
+    /// The per-row hint on queued PRs telling you when auto-review will pick them
+    /// up (nil unless auto-review is on and not paused).
+    private var queuedAutoHint: String? {
+        guard model.autoMode, model.rateLimitedUntil == nil, let d = model.nextAutoCheck else { return nil }
+        return "auto ~\(AppModel.timeFmt.string(from: d))"
+    }
+
+    private var toReview: [PRReview] { model.reviews.filter { $0.state == .queued } }
+    private var running: [PRReview]  { model.reviews.filter { $0.state == .running } }
 
     private var sidebar: some View {
-        List(selection: $selection) {
-            Section("Eligible (\(model.reviews.count))") {
-                if model.reviews.isEmpty && model.phase != .loading {
+        List(selection: $model.selection) {
+            Section(header: sectionHeader("To review", toReview.count)) {
+                if toReview.isEmpty && model.phase != .loading {
                     Text(model.phase == .error ? "Discovery failed — see status above."
                                                : "No eligible PRs.")
+                        .font(.callout)
                         .foregroundStyle(.secondary)
                 }
-                ForEach(model.reviews) { review in
-                    PRRow(review: review).tag(review.id)
+                ForEach(toReview) { review in
+                    PRRow(review: review, autoHint: queuedAutoHint).tag(review.id)
                 }
             }
+
+            if !running.isEmpty {
+                Section(header: sectionHeader("Running", running.count)) {
+                    ForEach(running) { review in
+                        PRRow(review: review, autoHint: nil).tag(review.id)
+                    }
+                }
+            }
+
+            if !model.completed.isEmpty {
+                Section(header: completedHeader) {
+                    ForEach(model.completed) { entry in
+                        CompletedRow(entry: entry).tag(entry.id)
+                    }
+                }
+            }
+
             if !model.skipped.isEmpty {
-                Section("Skipped (\(model.skipped.count))") {
+                Section(header: sectionHeader("Skipped", model.skipped.count)) {
                     ForEach(model.skipped, id: \.url) { sk in
                         SkippedRow(skipped: sk)
                     }
@@ -159,57 +202,140 @@ struct ContentView: View {
                 }
             }
         }
-        .listStyle(.sidebar)
+        .listStyle(.plain)
+        .scrollContentBackground(.hidden)
+        .background(Theme.sidebarBG)
+    }
+
+    private func sectionHeader(_ title: String, _ count: Int) -> some View {
+        Text("\(title) · \(count)")
+            .font(.caption).fontWeight(.semibold)
+            .foregroundStyle(Theme.ink3)
+            .textCase(.uppercase)
+    }
+
+    private var completedHeader: some View {
+        HStack {
+            sectionHeader("Completed", model.completed.count)
+            Spacer()
+            Button("Dismiss all") { model.dismissAll() }
+                .buttonStyle(.borderless)
+                .controlSize(.small)
+                .font(.caption)
+        }
     }
 
     // MARK: Detail
 
     @ViewBuilder private var detail: some View {
-        if let id = selection, let review = model.reviews.first(where: { $0.id == id }) {
-            TranscriptView(review: review)
-                .environmentObject(model)
+        if let id = model.selection, let review = model.reviews.first(where: { $0.id == id }) {
+            LiveTranscriptView(review: review).environmentObject(model)
+        } else if let id = model.selection, let entry = model.completed.first(where: { $0.id == id }) {
+            CompletedTranscriptView(entry: entry).environmentObject(model)
         } else {
-            ContentUnavailable(text: "Select a PR to view its review.")
+            ContentUnavailable(text: "Select a review to view its transcript.")
         }
     }
 }
 
-// One checklist row. @ObservedObject so the checkbox and state icon update live.
+// MARK: - Shared row pieces
+
+/// The small capsule marking how a run was started.
+struct SourceBadge: View {
+    let source: RunSource
+    var body: some View {
+        Text(source.label)
+            .font(.caption2)
+            .padding(.horizontal, 6).padding(.vertical, 1)
+            .background(Capsule().fill(source.tint.opacity(0.16)))
+            .foregroundStyle(source.tint)
+    }
+}
+
+/// A queued or running PR. @ObservedObject so the checkbox / spinner update live.
 struct PRRow: View {
     @ObservedObject var review: PRReview
+    let autoHint: String?
 
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
-            Toggle("", isOn: $review.selected)
-                .toggleStyle(.checkbox)
-                .labelsHidden()
+            leading
             VStack(alignment: .leading, spacing: 2) {
-                Text("\(review.name) #\(review.number)")
-                    .font(.system(.body, design: .default).weight(.semibold))
+                HStack(spacing: 6) {
+                    Text("\(review.name) #\(review.number)")
+                        .font(.system(.body, design: .default).weight(.semibold))
+                    if review.state == .running { SourceBadge(source: review.source) }
+                }
                 Text(review.title)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
-                Text(review.reasonLabel)
-                    .font(.caption2)
-                    .padding(.horizontal, 6).padding(.vertical, 1)
-                    .background(Capsule().fill(Color.accentColor.opacity(0.15)))
-                    .foregroundStyle(Color.accentColor)
+                HStack(spacing: 6) {
+                    Text(review.reasonLabel)
+                        .font(.caption2)
+                        .padding(.horizontal, 6).padding(.vertical, 1)
+                        .background(Capsule().fill(Theme.accentSoft))
+                        .foregroundStyle(Theme.accentText)
+                    if let autoHint, review.state == .queued {
+                        Label(autoHint, systemImage: "clock")
+                            .font(.caption2)
+                            .foregroundStyle(Theme.accentText)
+                    }
+                }
             }
             Spacer()
-            stateIcon
         }
         .padding(.vertical, 2)
     }
 
-    @ViewBuilder private var stateIcon: some View {
+    @ViewBuilder private var leading: some View {
         if review.state == .running {
-            ProgressView().controlSize(.small)
-        } else if review.state != .queued {
-            Image(systemName: review.state.symbol)
-                .foregroundStyle(review.state.tint)
-                .help(review.state.label)
+            ProgressView().controlSize(.small).padding(.top, 1)
+        } else {
+            Toggle("", isOn: $review.selected)
+                .toggleStyle(.checkbox)
+                .labelsHidden()
         }
+    }
+}
+
+// One finished review: verdict, source, re-review tag, timestamp, dismiss.
+struct CompletedRow: View {
+    let entry: CompletedReview
+    @EnvironmentObject var model: AppModel
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: entry.verdict.symbol)
+                .foregroundStyle(entry.verdict.tint)
+                .padding(.top, 2)
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Text("\(entry.name) #\(entry.number)")
+                        .font(.system(.body).weight(.semibold))
+                    SourceBadge(source: entry.source)
+                    if entry.isReReview {
+                        Label("re-review", systemImage: "arrow.clockwise")
+                            .font(.caption2)
+                            .padding(.horizontal, 6).padding(.vertical, 1)
+                            .background(Capsule().fill(Theme.warn.opacity(0.15)))
+                            .foregroundStyle(Theme.warn)
+                    }
+                }
+                Text(entry.title).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                HStack(spacing: 8) {
+                    Text(entry.verdict.label)
+                        .font(.caption).fontWeight(.medium)
+                        .foregroundStyle(entry.verdict.tint)
+                    Text(entry.finishedAt, style: .time)
+                        .font(.caption2).foregroundStyle(.secondary)
+                }
+            }
+            Spacer()
+            Button { model.dismiss(entry) } label: { Image(systemName: "xmark") }
+                .buttonStyle(.borderless).help("Dismiss")
+        }
+        .padding(.vertical, 2)
     }
 }
 
@@ -233,11 +359,14 @@ struct SkippedRow: View {
                 .foregroundStyle(.secondary)
         }
         .padding(.vertical, 2)
+        .opacity(0.6)
     }
 }
 
-// The live transcript for one PR.
-struct TranscriptView: View {
+// MARK: - Detail panes
+
+// The live transcript for one running/queued PR.
+struct LiveTranscriptView: View {
     @ObservedObject var review: PRReview
     @EnvironmentObject var model: AppModel
 
@@ -260,26 +389,72 @@ struct TranscriptView: View {
             }
             .padding(12)
             Divider()
+            TranscriptScroll(
+                items: review.items,
+                emptyText: review.state == .running ? "Waiting for first event…" : "No output yet. Press Run.",
+                autoscroll: true)
+        }
+    }
+}
 
-            ScrollViewReader { proxy in
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 10) {
-                        if review.items.isEmpty {
-                            Text(review.state == .running ? "Waiting for first event…"
-                                                          : "No output yet. Press Run.")
-                                .foregroundStyle(.secondary)
-                                .padding(.top, 8)
-                        }
-                        ForEach(Array(review.items.enumerated()), id: \.offset) { idx, item in
-                            ItemView(item: item).id(idx)
-                        }
+// The stored transcript for one completed review, shown inline in the detail pane.
+struct CompletedTranscriptView: View {
+    let entry: CompletedReview
+    @EnvironmentObject var model: AppModel
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 6) {
+                        Text("\(entry.name) #\(entry.number)").font(.headline)
+                        SourceBadge(source: entry.source)
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(12)
+                    Text(entry.title).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
                 }
-                .onChange(of: review.items.count) { _, count in
-                    if count > 0 { withAnimation { proxy.scrollTo(count - 1, anchor: .bottom) } }
+                Spacer()
+                Label(entry.verdict.label, systemImage: entry.verdict.symbol)
+                    .foregroundStyle(entry.verdict.tint)
+                if let url = URL(string: entry.url) {
+                    Button {
+                        NSWorkspace.shared.open(url)
+                    } label: {
+                        Label("Open on GitHub", systemImage: "arrow.up.right.square")
+                    }
                 }
+                Button { model.dismiss(entry) } label: {
+                    Label("Dismiss", systemImage: "xmark")
+                }
+            }
+            .padding(12)
+            Divider()
+            TranscriptScroll(items: entry.items, emptyText: "No transcript captured.", autoscroll: false)
+        }
+    }
+}
+
+// The scrolling transcript body, shared by live and archived panes.
+struct TranscriptScroll: View {
+    let items: [RenderItem]
+    let emptyText: String
+    let autoscroll: Bool
+
+    var body: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 10) {
+                    if items.isEmpty {
+                        Text(emptyText).foregroundStyle(.secondary).padding(.top, 8)
+                    }
+                    ForEach(Array(items.enumerated()), id: \.offset) { idx, item in
+                        ItemView(item: item).id(idx)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(12)
+            }
+            .onChange(of: items.count) { _, count in
+                if autoscroll, count > 0 { withAnimation { proxy.scrollTo(count - 1, anchor: .bottom) } }
             }
         }
     }
@@ -297,13 +472,13 @@ struct ItemView: View {
         case .toolCall(let name, _, let command):
             HStack(alignment: .top, spacing: 6) {
                 Image(systemName: "wrench.and.screwdriver")
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(Theme.warn)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(name).font(.system(.callout, design: .monospaced)).bold()
                     if let command, !command.isEmpty {
                         Text(command)
                             .font(.system(.caption, design: .monospaced))
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(Theme.ink2)
                             .lineLimit(3)
                             .textSelection(.enabled)
                     }
@@ -311,15 +486,15 @@ struct ItemView: View {
             }
             .padding(8)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(RoundedRectangle(cornerRadius: 6).fill(Color.orange.opacity(0.08)))
+            .background(RoundedRectangle(cornerRadius: 6).fill(Theme.warn.opacity(0.08)))
 
         case .toolResult(_, let isError):
             HStack(spacing: 6) {
                 Image(systemName: isError ? "exclamationmark.triangle.fill" : "arrow.turn.down.right")
-                    .foregroundStyle(isError ? .red : .secondary)
+                    .foregroundStyle(isError ? Theme.crit : Theme.ink3)
                 Text(isError ? "tool error" : "tool result")
                     .font(.caption)
-                    .foregroundStyle(isError ? .red : .secondary)
+                    .foregroundStyle(isError ? Theme.crit : Theme.ink3)
             }
 
         case .finished(let success, let summary):
@@ -327,7 +502,7 @@ struct ItemView: View {
                 Label(success ? "Review complete" : "Review failed",
                       systemImage: success ? "checkmark.seal.fill" : "xmark.octagon.fill")
                     .font(.headline)
-                    .foregroundStyle(success ? .green : .red)
+                    .foregroundStyle(success ? Theme.good : Theme.crit)
                 if !summary.isEmpty {
                     MarkdownView(summary)
                 }
@@ -335,7 +510,7 @@ struct ItemView: View {
             .padding(10)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(RoundedRectangle(cornerRadius: 8)
-                .fill((success ? Color.green : Color.red).opacity(0.08)))
+                .fill((success ? Theme.good : Theme.crit).opacity(0.08)))
         }
     }
 }
@@ -346,132 +521,5 @@ struct ContentUnavailable: View {
     var body: some View {
         VStack { Spacer(); Text(text).foregroundStyle(.secondary); Spacer() }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-}
-
-// MARK: - Auto-review inbox
-
-// The list of completed auto-reviews, each dismissed manually. In-memory only.
-struct InboxView: View {
-    @EnvironmentObject var model: AppModel
-    @State private var viewing: InboxEntry?
-
-    var body: some View {
-        if model.inbox.isEmpty {
-            ContentUnavailable(text: "No auto-reviews yet. Reviews run by auto-review show up here.")
-        } else {
-            VStack(spacing: 0) {
-                HStack {
-                    Text("\(model.inbox.count) awaiting dismissal")
-                        .font(.callout).foregroundStyle(.secondary)
-                    Spacer()
-                    Button("Dismiss all") { model.dismissAll() }
-                        .controlSize(.small)
-                }
-                .padding(12)
-                Divider()
-                // A List — not ScrollView { LazyVStack } — on purpose. The rows host
-                // AppKit-backed controls (`.link` / `.borderless` buttons), and those
-                // inside a LazyVStack drive SwiftUI's lazy size-estimation
-                // (LazyStack.measureEstimates) into a non-terminating layout-invalidation
-                // loop (100% CPU) once the list is scrolled. List virtualizes rows with a
-                // stable, non-lazy-estimate layout and hosts the same controls safely —
-                // it's what the live-queue sidebar uses for the same reason.
-                List {
-                    ForEach(model.inbox) { entry in
-                        InboxRow(entry: entry, onView: { viewing = entry })
-                            .listRowSeparator(.hidden)
-                            .listRowInsets(EdgeInsets(top: 4, leading: 12, bottom: 4, trailing: 12))
-                            .listRowBackground(Color.clear)
-                    }
-                }
-                .listStyle(.plain)
-                .scrollContentBackground(.hidden)
-            }
-            .sheet(item: $viewing) { entry in InboxTranscriptSheet(entry: entry) }
-        }
-    }
-}
-
-// One completed-review card: verdict, re-review tag, timestamp, and dismiss.
-struct InboxRow: View {
-    let entry: InboxEntry
-    let onView: () -> Void
-    @EnvironmentObject var model: AppModel
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .top, spacing: 8) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("\(entry.name) #\(entry.number)")
-                        .font(.system(.body).weight(.semibold))
-                    Text(entry.title).font(.caption).foregroundStyle(.secondary).lineLimit(2)
-                    if entry.isReReview {
-                        Label("re-review · \(reReasonLabel)", systemImage: "arrow.clockwise")
-                            .font(.caption2)
-                            .padding(.horizontal, 6).padding(.vertical, 1)
-                            .background(Capsule().fill(Color.orange.opacity(0.15)))
-                            .foregroundStyle(.orange)
-                    }
-                }
-                Spacer()
-                Label(entry.verdict.label, systemImage: entry.verdict.symbol)
-                    .font(.caption).foregroundStyle(entry.verdict.tint).labelStyle(.titleAndIcon)
-                Button { model.dismiss(entry) } label: { Image(systemName: "xmark") }
-                    .buttonStyle(.borderless).help("Dismiss")
-            }
-            HStack(spacing: 14) {
-                Text(entry.finishedAt, style: .time).font(.caption2).foregroundStyle(.secondary)
-                Button("View transcript", action: onView).buttonStyle(.link).controlSize(.small)
-                if let url = URL(string: entry.url) {
-                    Button("Open on GitHub") { NSWorkspace.shared.open(url) }
-                        .buttonStyle(.link).controlSize(.small)
-                }
-            }
-        }
-        .padding(10)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 8).fill(Color.secondary.opacity(0.06)))
-    }
-
-    private var reReasonLabel: String {
-        entry.reason == "new_commits_since_changes_requested"
-            ? "new commits since changes-requested" : "prior review not approved"
-    }
-}
-
-// The stored transcript for one completed auto-review, in a sheet.
-struct InboxTranscriptSheet: View {
-    let entry: InboxEntry
-    @Environment(\.dismiss) private var dismiss
-
-    var body: some View {
-        VStack(spacing: 0) {
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("\(entry.name) #\(entry.number)").font(.headline)
-                    Text(entry.title).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
-                }
-                Spacer()
-                Label(entry.verdict.label, systemImage: entry.verdict.symbol)
-                    .foregroundStyle(entry.verdict.tint)
-                Button("Done") { dismiss() }
-            }
-            .padding(12)
-            Divider()
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 10) {
-                    if entry.items.isEmpty {
-                        Text("No transcript captured.").foregroundStyle(.secondary).padding(.top, 8)
-                    }
-                    ForEach(Array(entry.items.enumerated()), id: \.offset) { _, item in
-                        ItemView(item: item)
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(12)
-            }
-        }
-        .frame(width: 720, height: 560)
     }
 }

@@ -19,7 +19,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         makeWindow()
         showWindow()
 
-        // Reflect inbox count / run state / rate-limit pause in the menu-bar item.
+        // Reflect completed-review count / run state / rate-limit pause in the menu-bar item.
         // objectWillChange fires *before* the mutation, so read on the next runloop.
         model.objectWillChange
             .sink { [weak self] in DispatchQueue.main.async { self?.updateStatusItem() } }
@@ -42,10 +42,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem.menu = menu
     }
 
-    /// Badge = unacknowledged inbox count; glyph reflects paused / running / idle.
+    /// Badge = completed reviews awaiting dismissal; glyph reflects paused / running / idle.
     private func updateStatusItem() {
         guard let button = statusItem.button else { return }
-        let count = model.inbox.count
+        let count = model.completed.count
         let symbol: String
         if model.rateLimitedUntil != nil {
             symbol = "clock.badge.exclamationmark"

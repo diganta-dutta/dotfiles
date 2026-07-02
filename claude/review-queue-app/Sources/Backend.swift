@@ -52,7 +52,7 @@ struct PRItem: Decodable, Equatable {
 }
 
 /// One PR that discovery rejected, with the machine reason it was skipped:
-/// no_local_checkout | ci_not_green | approved | changes_requested_no_new_commits.
+/// clone_failed | ci_not_green | approved | changes_requested_no_new_commits.
 struct SkippedPR: Decodable, Equatable {
     let repo: String
     let name: String

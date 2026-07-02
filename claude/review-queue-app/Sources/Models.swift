@@ -22,10 +22,10 @@ enum RunState {
     }
     var tint: Color {
         switch self {
-        case .queued:  return .secondary
-        case .running: return .blue
-        case .done:    return .green
-        case .failed:  return .red
+        case .queued:  return Theme.ink3
+        case .running: return Theme.accent
+        case .done:    return Theme.good
+        case .failed:  return Theme.crit
         }
     }
     var label: String {
@@ -36,6 +36,15 @@ enum RunState {
         case .failed:  return "Failed"
         }
     }
+}
+
+// How a review was started — shown as a small badge on running/completed rows so
+// you can tell a hand-picked run from one auto-review kicked off on its own.
+enum RunSource {
+    case manual, auto
+
+    var label: String { self == .auto ? "auto" : "manual" }
+    var tint: Color { self == .auto ? Theme.sourceAuto : Theme.ink2 }
 }
 
 final class PRReview: ObservableObject, Identifiable {
@@ -49,6 +58,7 @@ final class PRReview: ObservableObject, Identifiable {
 
     @Published var selected: Bool = true
     @Published var state: RunState = .queued
+    @Published var source: RunSource = .manual
     @Published var items: [RenderItem] = []
     @Published var exitCode: Int32? = nil
 
@@ -101,7 +111,7 @@ extension SkippedPR {
     /// Human-friendly skip reason for the dimmed sidebar rows.
     var reasonLabel: String {
         switch reason {
-        case "no_local_checkout":                 return "no local checkout"
+        case "clone_failed":                      return "checkout clone failed"
         case "ci_not_green":                      return "CI not green"
         case "approved":                          return "already approved"
         case "changes_requested_no_new_commits":  return "changes requested — no new commits"
@@ -145,19 +155,21 @@ enum Verdict {
     }
     var tint: Color {
         switch self {
-        case .approved:         return .green
-        case .changesRequested: return .red
-        case .commented:        return .blue
-        case .none:             return .secondary
-        case .failed:           return .red
+        case .approved:         return Theme.good
+        case .changesRequested: return Theme.crit
+        case .commented:        return Theme.commented
+        case .none:             return Theme.ink3
+        case .failed:           return Theme.crit
         }
     }
 }
 
-// One completed auto-review, held in memory until the user dismisses it. Not
-// persisted across app restarts (by design). Re-reviews are flagged from the
-// discovery reason so the inbox shows *why* the PR was reviewed again.
-struct InboxEntry: Identifiable {
+// One finished review — manual or auto — archived until the user dismisses it.
+// Every completed run lands here (this is what makes results survive a window
+// close). Held in memory only, not persisted across an app quit (by design).
+// Re-reviews are flagged from the discovery reason so the row shows *why* the PR
+// was reviewed again.
+struct CompletedReview: Identifiable {
     let id: String          // url + finish time — stable, allows repeat entries per PR
     let repo: String
     let name: String
@@ -165,6 +177,7 @@ struct InboxEntry: Identifiable {
     let url: String
     let title: String
     let reason: String
+    let source: RunSource
     let verdict: Verdict
     let finishedAt: Date
     let items: [RenderItem]
@@ -177,6 +190,8 @@ struct InboxEntry: Identifiable {
 final class AppModel: ObservableObject {
     enum Phase { case idle, loading, ready, running, error }
 
+    // `reviews` holds the *active* pipeline only: queued + running. A review
+    // leaves this array the moment it finishes and is archived into `completed`.
     @Published var reviews: [PRReview] = []
     @Published var skipped: [SkippedPR] = []
     @Published var phase: Phase = .idle
@@ -184,17 +199,28 @@ final class AppModel: ObservableObject {
     @Published var maxConcurrent: Int = 1
     @Published var statusLine: String = "Idle."
     @Published var preambleLog: String = ""
+    /// The row selected in the sidebar — a PRReview.url (live) or a
+    /// CompletedReview.id (archived). Lives on the model so run-completion and
+    /// refresh can keep it pointed at the right row across the archive handoff.
+    @Published var selection: String? = nil
 
     // Auto-review: a periodic poll that discovers eligible PRs and reviews them
-    // unattended, depositing each result in the inbox.
+    // unattended, archiving each result alongside the manual ones.
     @Published var autoMode: Bool = false { didSet { if autoMode != oldValue { autoModeChanged() } } }
     @Published var autoIntervalMinutes: Int = 15 { didSet { if autoMode { scheduleTimer() } } }
-    @Published var inbox: [InboxEntry] = []
+    /// Every finished review, manual or auto, newest first, until dismissed.
+    @Published var completed: [CompletedReview] = []
+    /// When the next auto-review poll will fire (nil when auto-review is off).
+    @Published var nextAutoCheck: Date? = nil
     /// Non-nil while auto-review is paused on a GitHub rate limit; the date it resumes.
     @Published var rateLimitedUntil: Date? = nil
 
     private var pending: [PRReview] = []
     private var active = 0
+    /// Tallies for the current run batch's completion message (reviews are removed
+    /// from `reviews` as they finish, so we can't count states after the fact).
+    private var batchDone = 0
+    private var batchFailed = 0
     /// True for the duration of an auto-initiated run batch (vs. a manual Run).
     private var autoRunActive = false
     /// Set when a discovery was kicked off by the poll timer; consumed in applyListResult.
@@ -204,7 +230,9 @@ final class AppModel: ObservableObject {
     private var resumeTimer: Timer?
     private var activity: NSObjectProtocol?   // App Nap / termination assertion while auto is on
 
-    var selectedCount: Int { reviews.filter { $0.selected }.count }
+    /// Only queued rows are runnable; running/finished ones aren't re-run.
+    var selectedCount: Int { reviews.filter { $0.selected && $0.state == .queued }.count }
+    var queuedCount: Int { reviews.filter { $0.state == .queued }.count }
     var isBusy: Bool { phase == .loading || phase == .running }
 
     // MARK: Discovery
@@ -248,13 +276,21 @@ final class AppModel: ObservableObject {
         }
         do {
             let result = try JSONDecoder().decode(ListResult.self, from: r.out)
-            // Preserve prior selection for PRs still present across a refresh.
-            let prior = Dictionary(uniqueKeysWithValues: reviews.map { ($0.id, $0.selected) })
-            reviews = result.eligible.map { item in
-                let pr = PRReview(item)
-                if let was = prior[item.url] { pr.selected = was }
-                return pr
-            }
+            // Never disturb an in-flight run; rebuild only the queued rows from
+            // discovery. Completed reviews live in `completed` and are untouched,
+            // so a PR reviewed earlier this session can legitimately reappear here
+            // as a fresh re-review.
+            let running = reviews.filter { $0.state == .running }
+            let runningUrls = Set(running.map { $0.url })
+            let prior = Dictionary(uniqueKeysWithValues:
+                reviews.filter { $0.state == .queued }.map { ($0.url, $0.selected) })
+            reviews = running + result.eligible
+                .filter { !runningUrls.contains($0.url) }
+                .map { item -> PRReview in
+                    let pr = PRReview(item)
+                    if let was = prior[item.url] { pr.selected = was }
+                    return pr
+                }
             skipped = result.skipped
             phase = .ready
             let elig = result.eligible.isEmpty ? "No eligible PRs" : "\(result.eligible.count) eligible"
@@ -271,11 +307,11 @@ final class AppModel: ObservableObject {
 
     func runSelected() {
         guard !isBusy else { return }
-        let queue = reviews.filter { $0.selected }
+        let queue = reviews.filter { $0.selected && $0.state == .queued }
         guard !queue.isEmpty else { return }
         queue.forEach { $0.resetForRun() }
         pending = queue
-        active = 0
+        active = 0; batchDone = 0; batchFailed = 0
         phase = .running
         statusLine = "Running \(queue.count) review(s), \(maxConcurrent) at a time…"
         startMore()
@@ -289,8 +325,8 @@ final class AppModel: ObservableObject {
             phase = .ready
             let wasAuto = autoRunActive
             autoRunActive = false
-            let failed = reviews.filter { $0.state == .failed }.count
-            let done = reviews.count - failed
+            let failed = batchFailed
+            let done = batchDone
             if wasAuto {
                 statusLine = failed == 0
                     ? "Auto-review: \(done) posted. Next check in \(autoIntervalMinutes) min."
@@ -305,24 +341,28 @@ final class AppModel: ObservableObject {
         active += 1
         r.state = .running
         let auto = autoRunActive
+        r.source = auto ? .auto : .manual
         r.process = ProcessRunner.stream(
             Paths.bash,
             [Paths.reviewQueueBin.path, "--run", r.url],
             onData: { data in DispatchQueue.main.async { r.ingest(data) } },
             onExit: { code in
-                DispatchQueue.main.async {
-                    r.finish(code)
-                    if auto { self.recordInboxEntry(for: r) }
-                    self.active -= 1
-                    self.startMore()
-                }
+                DispatchQueue.main.async { self.completeRun(r, code: code, auto: auto) }
             }
         )
         if r.process == nil {   // spawn failed
-            r.finish(-1)
-            if auto { recordInboxEntry(for: r) }
-            active -= 1
+            completeRun(r, code: -1, auto: auto)
         }
+    }
+
+    /// A run just exited: tally it, archive it (which removes it from the active
+    /// list once the posted verdict is known), and pull the next pending review.
+    private func completeRun(_ r: PRReview, code: Int32, auto: Bool) {
+        r.finish(code)
+        if r.state == .failed { batchFailed += 1 } else { batchDone += 1 }
+        archive(r, auto: auto)
+        active -= 1
+        startMore()
     }
 
     func openInDesktop(_ r: PRReview) {
@@ -338,6 +378,7 @@ final class AppModel: ObservableObject {
             tickIfReady()            // don't wait a full interval for the first run
         } else {
             pollTimer?.invalidate(); pollTimer = nil
+            nextAutoCheck = nil
             clearRateLimit()
             endActivityAssertion()
             if phase == .ready { statusLine = "Auto-review off." }
@@ -347,8 +388,11 @@ final class AppModel: ObservableObject {
     private func scheduleTimer() {
         pollTimer?.invalidate()
         let interval = TimeInterval(max(1, autoIntervalMinutes) * 60)
+        nextAutoCheck = Date().addingTimeInterval(interval)
         pollTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
-            self?.tickIfReady()
+            guard let self else { return }
+            self.nextAutoCheck = Date().addingTimeInterval(interval)
+            self.tickIfReady()
         }
     }
 
@@ -361,27 +405,30 @@ final class AppModel: ObservableObject {
 
     /// Run every eligible PR from the just-completed discovery, unattended.
     private func autoRunEligible() {
-        guard !reviews.isEmpty else {
+        let queue = reviews.filter { $0.state == .queued }
+        guard !queue.isEmpty else {
             statusLine = "Auto-review: nothing eligible. Next check in \(autoIntervalMinutes) min."
             return
         }
-        reviews.forEach { $0.selected = true; $0.resetForRun() }
-        pending = reviews
-        active = 0
+        queue.forEach { $0.selected = true; $0.resetForRun() }
+        pending = queue
+        active = 0; batchDone = 0; batchFailed = 0
         autoRunActive = true
         phase = .running
-        statusLine = "Auto-review: running \(reviews.count), \(maxConcurrent) at a time…"
+        statusLine = "Auto-review: running \(queue.count), \(maxConcurrent) at a time…"
         startMore()
     }
 
-    /// After an auto-run finishes, query the posted verdict and deposit the result
-    /// in the inbox. Verdict comes from `--verdict` (ground truth on GitHub), not
-    /// from the transcript.
-    private func recordInboxEntry(for r: PRReview) {
+    /// Archive a finished review — manual or auto. Query the posted verdict
+    /// (ground truth from `--verdict`, not the transcript), then move the run out
+    /// of the active list into `completed`, keeping the sidebar selection on it if
+    /// it was the row being viewed.
+    private func archive(_ r: PRReview, auto: Bool) {
         let runFailed = (r.state == .failed)
         let snapshot = r.items
         let repo = r.repo, name = r.name, number = r.number
         let url = r.url, title = r.title, reason = r.reason
+        let source: RunSource = auto ? .auto : .manual
         Task {
             var state: String? = nil
             if !runFailed {
@@ -395,16 +442,27 @@ final class AppModel: ObservableObject {
             }
             let verdict = Verdict(state: state, runFailed: runFailed)
             let now = Date()
-            let entry = InboxEntry(
+            let entry = CompletedReview(
                 id: "\(url)#\(now.timeIntervalSince1970)",
                 repo: repo, name: name, number: number, url: url, title: title,
-                reason: reason, verdict: verdict, finishedAt: now, items: snapshot)
-            await MainActor.run { self.inbox.insert(entry, at: 0) }   // newest first
+                reason: reason, source: source, verdict: verdict, finishedAt: now, items: snapshot)
+            await MainActor.run {
+                if self.selection == url { self.selection = entry.id }
+                self.reviews.removeAll { $0.id == url }
+                self.completed.insert(entry, at: 0)   // newest first
+            }
         }
     }
 
-    func dismiss(_ entry: InboxEntry) { inbox.removeAll { $0.id == entry.id } }
-    func dismissAll() { inbox.removeAll() }
+    func dismiss(_ entry: CompletedReview) {
+        completed.removeAll { $0.id == entry.id }
+        if selection == entry.id { selection = nil }
+    }
+    func dismissAll() {
+        let ids = Set(completed.map(\.id))
+        completed.removeAll()
+        if let s = selection, ids.contains(s) { selection = nil }
+    }
 
     // MARK: Rate-limit pause / resume
 

@@ -5,11 +5,17 @@ GitHub repos. A thin SwiftUI front-end over `review-queue` (a bash workhorse) an
 a stream-json parser. Discovers PRs awaiting your review, lets you deselect a
 subset, then runs the reviews — serial by default — streaming each one live.
 
+One sidebar shows the whole lifecycle — **To review → Running → Completed →
+Skipped** — beside a detail pane that renders whichever row you pick, live stream
+or archived transcript alike. Every finished review, manual or auto, is archived
+into **Completed** (verdict + full transcript) so closing the window no longer
+loses it; the archive is in-memory and survives a window relaunch but not a quit.
+
 It can also run **unattended**: turn on Auto-review and it polls on an interval,
-reviews every eligible PR, and drops each result (verdict + transcript) into an
-in-memory **inbox** you dismiss manually. The menu-bar item badges the count of
-undismissed results. On a GitHub rate limit it pauses, surfaces the reason and
-resume time, and resumes on its own.
+reviews every eligible PR, and archives each result alongside the manual ones. A
+status strip and a per-row hint show when the next auto-run will fire. The
+menu-bar item badges the count of undismissed completed reviews. On a GitHub rate
+limit it pauses, surfaces the reason and resume time, and resumes on its own.
 
 ## Components
 
@@ -18,8 +24,8 @@ review-queue                 backend: discovery + per-PR execution (bash)
 Sources/                     the app
   ReviewStreamParser.swift   stream-json (NDJSON) -> render items; partial-line safe
   Backend.swift              Paths, Process shell-out, PRItem (Foundation only)
-  Models.swift               AppModel + PRReview (state, run queue)
-  ContentView.swift          checklist sidebar + live transcript pane
+  Models.swift               AppModel + PRReview (state, run queue) + CompletedReview archive
+  ContentView.swift          unified lifecycle sidebar + live/archived transcript pane
   AppDelegate.swift, main.swift   NSStatusItem + window bootstrap
 make-review-queue-app.sh     builds ~/Applications/Review Queue.app
 tests/                       run-tests.sh, Smoke.swift
@@ -33,8 +39,9 @@ STREAM-SCHEMA.md             the stream-json event schema this parses
   `PATH=~/.local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin` for spawned
   processes.
 - Swift toolchain (`xcrun swiftc`), macOS 14+.
-- A local checkout of each repo under `~/code/<repo-name>` — PRs without one are
-  skipped by discovery.
+- A local checkout of each repo under `~/code/<repo-name>`. Discovery clones any
+  missing repo automatically (via `gh repo clone`); a PR is only skipped
+  (`clone_failed`) if that clone fails.
 
 ## Build & install
 
@@ -55,25 +62,28 @@ registered with Launch Services.
 3. Deselect any PRs to skip. Pick concurrency (Serial / 2 / 3 — serial is kindest
    to rate limits).
 4. **Run N selected** spawns `review-queue --run <url>` per PR. Click a PR to
-   watch its review stream live; per-PR state goes queued → running → done/failed.
+   watch its review stream live; a run moves **To review → Running → Completed**,
+   and its verdict + transcript stay in **Completed** until you dismiss it.
 5. **Open in Desktop** on a PR opens Terminal in that repo and runs `claude`
    interactively (no `-p`) seeded with `/review-pr <url>`.
 
 ### Auto-review
 
 Toggle **Auto-review** in the header (or the menu-bar menu) and pick an interval.
-On each tick it runs discovery (skipping the git-pull preamble — too heavy to run
-every interval) and reviews every eligible PR unattended. The posted verdict
-(approved / changes requested / commented) is read back from GitHub via
-`--verdict`, not guessed from the transcript, and each result lands in the
-**Auto-review inbox** tab: verdict, timestamp, a re-review tag when applicable,
-the captured transcript (View transcript), and Open on GitHub. The inbox is
-in-memory only — results survive refreshes but not a quit — and entries clear
-only when you dismiss them. The menu-bar badge shows the undismissed count.
+A status strip then shows when the next check fires and how many eligible PRs
+will run then, and each queued row carries an `auto ~HH:MM` hint. On each tick it
+runs discovery (skipping the git-pull preamble — too heavy to run every interval)
+and reviews every eligible PR unattended. The posted verdict (approved / changes
+requested / commented) is read back from GitHub via `--verdict`, not guessed from
+the transcript, and each result lands in **Completed** — tagged `auto`, with a
+re-review tag when applicable, the captured transcript, and Open on GitHub —
+right alongside your manual runs. Completed entries are in-memory only (they
+survive refreshes and window relaunches but not a quit) and clear when you
+dismiss them; the menu-bar badge shows the undismissed count.
 
 Reviews post as **formal reviews** with whatever verdict `/review-pr` decides
 (including approve/request-changes) — there is no comment-only clamp and no
-pre-post staging. The inbox is an after-the-fact record, not an approval gate.
+pre-post staging. Completed is an after-the-fact record, not an approval gate.
 
 While Auto-review is on the app holds a `userInitiatedAllowingIdleSystemSleep`
 activity assertion so the poll timer keeps firing on a **locked** Mac; a
@@ -109,10 +119,13 @@ e.g. a secondary limit). Neither invokes claude.
 each entry `{repo, name, number, url, title, reason}`. Every open PR where you're
 a requested reviewer lands in exactly one bucket. Eligible `reason` is
 `never_reviewed`, `new_commits_since_changes_requested`, or
-`prior_review_not_approved`; skipped `reason` is `no_local_checkout`,
-`ci_not_green`, `approved`, or `changes_requested_no_new_commits`. CI gating is
-via `gh pr checks`; the re-review decision compares your last review's state and
-commit against the PR head. `CODE_ROOT` and `SLASH_CMD` (default `/review-pr`)
+`prior_review_not_approved`; skipped `reason` is `clone_failed`,
+`ci_not_green`, `approved`, or `changes_requested_no_new_commits`. Discovery
+auto-clones a missing checkout and only skips (`clone_failed`) if that fails. CI
+gating reads the PR's status-check rollup: a PR is skipped only when a check is
+failing or pending — a PR with **no CI configured at all** is left eligible. The
+re-review decision compares your last review's state and commit against the PR
+head. `CODE_ROOT` and `SLASH_CMD` (default `/review-pr`)
 are env-overridable.
 
 ## Tests
