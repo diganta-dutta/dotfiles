@@ -151,8 +151,12 @@
       "Bash(jira issue delete *)",
       "Bash(jira issue comment *)"
     ],
-    "defaultMode": "acceptEdits"
+    "defaultMode": "auto"
   },
+  "model": "opus",
+  "effortLevel": "high",
+  "tui": "fullscreen",
+  "theme": "auto",
   "agentPushNotifEnabled": true,
-  "tui": "fullscreen"
+  "skipAutoPermissionPrompt": true
 }
