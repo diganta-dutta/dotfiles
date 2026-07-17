@@ -195,8 +195,19 @@ run_one() {
   fi
 
   cd "$dir"
-  git fetch origin "pull/$num/head:pr-$num" --force --quiet 2>/dev/null || true
-  git checkout "pr-$num" --quiet 2>/dev/null || true
+  # Check out the PR head as a DETACHED HEAD, never a persistent local branch.
+  # A named `pr-$num` branch would survive past this run (we exec into claude
+  # below and never regain control to delete it), so they used to pile up one
+  # per review. Detaching leaves nothing behind. We also reap any `pr-*`
+  # branches stranded by older versions of this script before fetching: first
+  # detach off whatever is checked out (so a current `pr-*` branch is deletable),
+  # then delete every `pr-*` head.
+  git checkout --quiet --detach 2>/dev/null || true
+  git for-each-ref --format='%(refname:short)' 'refs/heads/pr-*' | while read -r b; do
+    [ -n "$b" ] && git branch -D "$b" --quiet 2>/dev/null || true
+  done
+  git fetch origin "pull/$num/head" --quiet 2>/dev/null || true
+  git checkout --quiet --detach FETCH_HEAD 2>/dev/null || true
 
   # exec: claude's stdout becomes this script's stdout (unbuffered passthrough)
   # and claude's exit code becomes ours.
