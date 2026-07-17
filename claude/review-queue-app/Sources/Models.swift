@@ -318,8 +318,16 @@ final class AppModel: ObservableObject {
     }
 
     private func startMore() {
-        while active < maxConcurrent, !pending.isEmpty {
-            start(pending.removeFirst())
+        // Never run two PRs from the same repo at once: they share one local
+        // checkout ($CODE_ROOT/<name>), and concurrent `--run`s would race on
+        // its detached HEAD, cross-contaminating each other's full-file context.
+        // Skip any pending PR whose checkout is already busy; it stays queued and
+        // is picked up the moment that repo frees up. This can't stall: if
+        // active == 0 no checkout is busy, so some pending PR is always runnable.
+        while active < maxConcurrent {
+            let busy = Set(reviews.filter { $0.state == .running }.map { $0.name })
+            guard let idx = pending.firstIndex(where: { !busy.contains($0.name) }) else { break }
+            start(pending.remove(at: idx))
         }
         if active == 0 && pending.isEmpty && phase == .running {
             phase = .ready
