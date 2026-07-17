@@ -144,12 +144,7 @@
       "Bash(wget * | bash*)"
     ],
     "ask": [
-      "Bash(git push *)",
-      "Bash(jira issue create *)",
-      "Bash(jira issue edit *)",
-      "Bash(jira issue move *)",
       "Bash(jira issue delete *)",
-      "Bash(jira issue comment *)"
     ],
     "defaultMode": "auto"
   },
