@@ -72,8 +72,12 @@ ci_state() {
       else
         ( [ $c[] |
             if .__typename == "CheckRun" then
-              (.status == "COMPLETED"
-               and (.conclusion == "SUCCESS" or .conclusion == "NEUTRAL" or .conclusion == "SKIPPED"))
+              # Gate on the conclusion, not the status flag: GitHub sometimes
+              # leaves a finished check run at status=IN_PROGRESS while its
+              # conclusion is already SUCCESS (the status field lags). GitHub's
+              # own rollup keys off the conclusion, so we do too. A null
+              # conclusion means genuinely queued/running -> not green yet.
+              (.conclusion == "SUCCESS" or .conclusion == "NEUTRAL" or .conclusion == "SKIPPED")
             elif .__typename == "StatusContext" then
               (.state == "SUCCESS")
             else false end
