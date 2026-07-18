@@ -74,8 +74,8 @@ ci_state() {
             if .__typename == "CheckRun" then
               # Gate on the conclusion, not the status flag: GitHub sometimes
               # leaves a finished check run at status=IN_PROGRESS while its
-              # conclusion is already SUCCESS (the status field lags). GitHub's
-              # own rollup keys off the conclusion, so we do too. A null
+              # conclusion is already SUCCESS (the status field lags). The
+              # GitHub rollup keys off the conclusion, so we do too. A null
               # conclusion means genuinely queued/running -> not green yet.
               (.conclusion == "SUCCESS" or .conclusion == "NEUTRAL" or .conclusion == "SKIPPED")
             elif .__typename == "StatusContext" then
