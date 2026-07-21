@@ -53,6 +53,37 @@ ln_one() {
   fi
 }
 
+ensure_zshrc_stub() {
+  # ~/.zshrc is NOT symlinked: installers (nvm, pyenv, gcloud, ...) append PATH
+  # blocks to it, and appending through a symlink would write into the repo.
+  # Instead ~/.zshrc stays a real per-machine file that sources the shared
+  # config from the repo. This only ensures that source line is present; it
+  # never rewrites or reorders the user's existing machine-specific lines.
+  local repo_zshrc="$1"
+  local dst="$2"
+  local source_line="source \"${repo_zshrc}\""
+
+  if [[ -L "${dst}" ]]; then
+    # A leftover symlink from an older setup — back it up and start a real stub.
+    mv "${dst}" "${dst}.backup-${TIMESTAMP}"
+    echo "  stub: replaced symlink ${dst} (backed up to ${dst}.backup-${TIMESTAMP})"
+  fi
+
+  if [[ ! -e "${dst}" ]]; then
+    printf '# ~/.zshrc — per-machine interactive config (NOT tracked in git).\n# Shared interactive config lives in the dotfiles repo, sourced below.\n# Installer PATH lines (nvm, etc.) and machine-specific tweaks go here.\n\n%s\n' "${source_line}" > "${dst}"
+    echo "  stub: ${dst} created (sources ${repo_zshrc})"
+    return
+  fi
+
+  if grep -qF "${repo_zshrc}" "${dst}"; then
+    echo "  stub: ${dst} already sources ${repo_zshrc}"
+    return
+  fi
+
+  printf '\n# Load shared interactive config from dotfiles repo.\n%s\n' "${source_line}" >> "${dst}"
+  echo "  stub: ${dst} updated to source ${repo_zshrc}"
+}
+
 prune_stale_links() {
   # Remove symlinks under dst_dir that point into src_dir but whose source
   # file no longer exists (e.g. a slash command was deleted upstream). Only
@@ -120,6 +151,7 @@ ln_one "${REPO_DIR}/claude/CLAUDE.md"     "${HOME}/.claude/CLAUDE.md"     "claud
 
 echo "Installing zsh config from ${REPO_DIR}/zsh"
 ln_one "${REPO_DIR}/zsh/zshenv" "${HOME}/.zshenv" "zsh/zshenv -> ~/.zshenv"
+ensure_zshrc_stub "${REPO_DIR}/zsh/zshrc" "${HOME}/.zshrc"
 
 echo "ai-prompts repo: ${AI_PROMPTS_REPO}"
 echo "Installing Claude Code commands -> ${CLAUDE_CMDS_DST}"

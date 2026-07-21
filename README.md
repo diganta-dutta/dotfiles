@@ -15,13 +15,30 @@ dotfiles/
 │   ├── launch/                # "Claude Launcher" — git-pull/refresh then open Claude
 │   └── review-queue-app/      # "Review Queue" — batch Claude Code PR reviews (see its README)
 └── zsh/
-    ├── zshenv                 # -> ~/.zshenv
-    └── zshenv.local.example   # template for per-machine secrets (~/.zshenv.local)
+    ├── zshenv                 # -> ~/.zshenv (symlinked)
+    ├── zshenv.local.example   # template for per-machine secrets (~/.zshenv.local)
+    └── zshrc                  # shared interactive config, sourced by a ~/.zshrc stub
 ```
+
+### zsh layout: symlink vs. stub
+
+`~/.zshenv` is **symlinked** — nothing appends to it, so a symlink is safe and
+edits to the repo take effect everywhere immediately.
+
+`~/.zshrc` is **not** symlinked. Installers (nvm, pyenv, gcloud, rustup, …)
+append PATH blocks to `~/.zshrc`, and appending through a symlink would write
+into the repo. So `~/.zshrc` stays a real per-machine file that just sources
+the shared `zsh/zshrc`; `install.sh` adds that source line if it's missing.
+Shared interactive config (prompt, aliases, functions, completions) goes in
+`zsh/zshrc`; machine-specific tweaks and installer PATH lines live directly in
+`~/.zshrc`. (No `~/.zshrc.local` needed — `~/.zshrc` itself is the per-machine
+file. Env vars/PATH that non-interactive shells must see still belong in
+`zsh/zshenv`.)
 
 ## install.sh
 
 Symlinks `claude/settings.json`, `claude/CLAUDE.md`, and `zsh/zshenv` into `$HOME`,
+ensures `~/.zshrc` sources `zsh/zshrc` (see zsh layout above),
 and links the slash-commands/workflows from the separate
 [ai-prompts](https://github.com/) repo into Claude Code and Cline. Idempotent;
 real files at target paths are backed up to `<file>.backup-<timestamp>`, and

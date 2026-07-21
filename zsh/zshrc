@@ -1,0 +1,37 @@
+# zsh interactive config shared across all workstations.
+#
+# This file is NOT symlinked to ~/.zshrc. Instead a small per-machine
+# ~/.zshrc stub sources it (install.sh sets that up). That keeps this file
+# pristine — installers like nvm/pyenv/gcloud that append to ~/.zshrc write
+# into the per-machine stub, never into the repo.
+#
+# Put interactive-only setup here: prompt, aliases, functions, completions,
+# keybindings. Env vars and PATH that every shell (including the
+# non-interactive ones Claude Code spawns) must see belong in zsh/zshenv.
+#
+# Machine-specific interactive tweaks don't need a separate file — add them
+# directly to ~/.zshrc, after the line that sources this file.
+
+# --- Git-aware prompt (vcs_info) -------------------------------------------
+# Shows (branch) with a yellow * for unstaged and a green + for staged changes.
+autoload -Uz vcs_info
+function precmd_vcs_info() { vcs_info }
+precmd_functions+=(precmd_vcs_info)
+
+# Allow variable substitution inside the prompt.
+setopt prompt_subst
+
+# check-for-changes gives accurate dirty/staged status (costs a little per prompt).
+zstyle ':vcs_info:*' check-for-changes true
+
+# How git status renders: (branch_name) [staged/unstaged flags].
+zstyle ':vcs_info:git:*' formats '%F{cyan}(%b)%f%F{yellow}%u%f%F{green}%c%f'
+zstyle ':vcs_info:git:*' actionformats '%F{cyan}(%b|%a)%f%F{yellow}%u%f%F{green}%c%f'
+
+# Visual indicators for unstaged (yellow *) and staged (green +) changes.
+zstyle ':vcs_info:git:*' unstagedstr '*'
+zstyle ':vcs_info:git:*' stagedstr '+'
+
+# Prompt: user@host dir (git status) on line one, $ on line two.
+PROMPT='%F{blue}%n@%m %F{magenta}%1~ ${vcs_info_msg_0_}%f
+%F{white}$ %f'
