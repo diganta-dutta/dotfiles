@@ -40,6 +40,7 @@
       "Bash(gh run view *)",
       "Bash(gh run list *)",
       "Bash(gh api *)",
+      "Bash(gh api repos/*/pulls/*/reviews --method POST *)",
       "Bash(gh auth status*)",
       "Bash(gh auth status)",
       "Bash(npm *)",
