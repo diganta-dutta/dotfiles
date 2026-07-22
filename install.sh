@@ -64,9 +64,12 @@ ensure_zshrc_stub() {
   local source_line="source \"${repo_zshrc}\""
 
   if [[ -L "${dst}" ]]; then
-    # A leftover symlink from an older setup — back it up and start a real stub.
-    mv "${dst}" "${dst}.backup-${TIMESTAMP}"
-    echo "  stub: replaced symlink ${dst} (backed up to ${dst}.backup-${TIMESTAMP})"
+    # A symlinked ~/.zshrc (e.g. from another dotfiles manager). Never touch it:
+    # replacing would drop its config, and appending writes into its target.
+    # Leave it alone and tell the user how to wire in the shared config.
+    echo "  stub: ${dst} is a symlink — left untouched."
+    echo "        To load shared config, add to its target: ${source_line}"
+    return
   fi
 
   if [[ ! -e "${dst}" ]]; then
