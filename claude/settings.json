@@ -145,7 +145,7 @@
       "Bash(wget * | bash*)"
     ],
     "ask": [
-      "Bash(jira issue delete *)",
+      "Bash(jira issue delete *)"
     ],
     "defaultMode": "auto"
   },
